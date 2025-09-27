@@ -161,11 +161,24 @@ async function pullJob(jobKey: string) {
   try {
     const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: 'GET' });
     if (!res.ok) return null;
-    return await res.json(); // { job, items:[{stage, subtask, status, notes}] }
+    const j = await res.json();
+
+    // Accept both API shapes:
+    // 1) { job, items: [...] }  (our intended script)
+    // 2) { ok:true, data:[...] } (your current script response)
+    if (Array.isArray(j?.items)) {
+      return { items: j.items };
+    }
+    if (Array.isArray(j?.data)) {
+      // if it's already an array of {stage, subtask, status, notes}, pass through
+      return { items: j.data };
+    }
+    return { items: [] };
   } catch {
     return null;
   }
 }
+
 
 async function pushUpdate(payload: any) {
   if (!SYNC_URL) return;
