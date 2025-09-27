@@ -132,24 +132,30 @@ export default function App() {
     return count>0 ? Math.round(total / count) : 0
   }
 
-  function setSubStatus(r: Record<string,string>, stage: string, name: string, status: 'none'|'progress'|'done') {
-    const key = getJobKey(r)
-    setProgress((prev: any) => {
-      const cur = prev[key]?.[stage] ?? { subs: {} }
-      const curItem = cur.subs?.[name] || { status: 'none' }
-      const next = { subs: { ...(cur.subs || {}), [name]: { status, notes: curItem.notes } } }
-      return { ...prev, [key]: { ...(prev[key] || {}), [stage]: next } }
-    })
-  }
-  function setSubNotes(r: Record<string,string>, stage: string, name: string, notes: string) {
-    const key = getJobKey(r)
-    setProgress((prev: any) => {
-      const cur = prev[key]?.[stage] ?? { subs: {} }
-      const curItem = cur.subs?.[name] || { status: 'progress' }
-      const next = { subs: { ...(cur.subs || {}), [name]: { status: curItem.status || 'progress', notes } } }
-      return { ...prev, [key]: { ...(prev[key] || {}), [stage]: next } }
-    })
-  }
+function setSubStatus(r: Record<string,string>, stage: string, name: string, status: 'none'|'progress'|'done') {
+  const job = getJobKey(r);
+  setProgress((prev: any) => {
+    const cur = prev[job]?.[stage] ?? { subs: {} };
+    const curItem = cur.subs?.[name] || { status: 'none' };
+    const next = { subs: { ...(cur.subs || {}), [name]: { status, notes: curItem.notes } } };
+    return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
+  });
+  // push single-item update to Apps Script
+  pushUpdate({ job, updatedBy: r['Assigned To'] || 'Unknown', stage, subtask: name, status });
+}
+
+function setSubNotes(r: Record<string,string>, stage: string, name: string, notes: string) {
+  const job = getJobKey(r);
+  setProgress((prev: any) => {
+    const cur = prev[job]?.[stage] ?? { subs: {} };
+    const curItem = cur.subs?.[name] || { status: 'progress' };
+    const next = { subs: { ...(cur.subs || {}), [name]: { status: curItem.status || 'progress', notes } } };
+    return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
+  });
+  // push with notes (assume progress when editing notes)
+  pushUpdate({ job, updatedBy: r['Assigned To'] || 'Unknown', stage, subtask: name, status: 'progress', notes });
+}
+
 async function pullJob(jobKey: string) {
   if (!SYNC_URL) return null;
   try {
