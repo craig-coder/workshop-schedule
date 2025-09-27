@@ -174,11 +174,27 @@ async function pushUpdate(payload: any) {
   }
 }
 
-  function openChecklist(r: Record<string,string>, stage: string) {
-    if (!SECTION_DEFS[stage]) { alert('No subtasks configured for ' + stage); return }
-    setOpenKey(getJobKey(r))
-    setOpenStage(stage)
+async function openChecklist(r: Record<string,string>, stage: string) {
+  if (!SECTION_DEFS[stage]) { alert('No subtasks configured for ' + stage); return; }
+  const jobKey = getJobKey(r);
+  setOpenKey(jobKey);
+  setOpenStage(stage);
+
+  // Pull latest server state for this job and merge into local
+  const remote = await pullJob(jobKey);
+  if (remote && Array.isArray(remote.items)) {
+    setProgress((prev: any) => {
+      const nextJob = { ...(prev[jobKey] || {}) };
+      remote.items.forEach((it: any) => {
+        const st = nextJob[it.stage] || { subs: {} };
+        st.subs[it.subtask] = { status: it.status || 'none', notes: it.notes || '' };
+        nextJob[it.stage] = st;
+      });
+      return { ...prev, [jobKey]: nextJob };
+    });
   }
+}
+
 
   function BoolCell({ on }: { on: boolean }) {
     return (
