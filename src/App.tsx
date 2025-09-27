@@ -150,6 +150,29 @@ export default function App() {
       return { ...prev, [key]: { ...(prev[key] || {}), [stage]: next } }
     })
   }
+async function pullJob(jobKey: string) {
+  if (!SYNC_URL) return null;
+  try {
+    const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: 'GET' });
+    if (!res.ok) return null;
+    return await res.json(); // { job, items:[{stage, subtask, status, notes}] }
+  } catch {
+    return null;
+  }
+}
+
+async function pushUpdate(payload: any) {
+  if (!SYNC_URL) return;
+  try {
+    await fetch(SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids CORS preflight
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // ignore network errors so UI stays responsive
+  }
+}
 
   function openChecklist(r: Record<string,string>, stage: string) {
     if (!SECTION_DEFS[stage]) { alert('No subtasks configured for ' + stage); return }
