@@ -1,4 +1,5 @@
 import React from "react"
+const SYNC_URL = import.meta.env.VITE_SYNC_URL; // Apps Script web app URL
 
 const DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091"
 
