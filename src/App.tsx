@@ -207,6 +207,18 @@ function getJobKey(r: Record<string, string>) {
     }
   }
 
+  function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
+  setProgress((prev: any) => {
+    const nextJob = { ...(prev[jobKey] || {}) };
+    items.forEach((it: any) => {
+      const st = nextJob[it.stage] || { subs: {} };
+      st.subs[it.subtask] = { status: it.status || "none", notes: it.notes || "" };
+      nextJob[it.stage] = st;
+    });
+    return { ...prev, [jobKey]: nextJob };
+  });
+}
+
   // JSON via proxy
   async function pushUpdate(payload: any) {
     try {
@@ -229,19 +241,30 @@ function getJobKey(r: Record<string, string>) {
     setOpenKey(jobKey);
     setOpenStage(stage);
 
-    const remote = await pullJob(jobKey);
-    if (remote && Array.isArray(remote.items)) {
-      setProgress((prev: any) => {
-        const nextJob = { ...(prev[jobKey] || {}) };
-        remote.items.forEach((it: any) => {
-          const st = nextJob[it.stage] || { subs: {} };
-          st.subs[it.subtask] = { status: it.status || "none", notes: it.notes || "" };
-          nextJob[it.stage] = st;
-        });
-        return { ...prev, [jobKey]: nextJob };
-      });
+if (remote && Array.isArray(remote.items)) {
+  mergeRemoteIntoLocal(jobKey, remote.items);
+}
+React.useEffect(() => {
+  if (!openKey) return;
+  let cancelled = false;
+
+  async function refresh() {
+    const remote = await pullJob(openKey);
+    if (!cancelled && remote && Array.isArray(remote.items)) {
+      mergeRemoteIntoLocal(openKey, remote.items);
     }
   }
+
+  // initial fetch (in case another device changed it)
+  refresh();
+
+  const id = window.setInterval(refresh, 10000); // 10s
+  return () => {
+    cancelled = true;
+    window.clearInterval(id);
+  };
+}, [openKey]);
+
 
   function BoolCell({ on }: { on: boolean }) {
     return (
