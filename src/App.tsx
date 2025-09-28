@@ -225,17 +225,34 @@ export default function App() {
     pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status: "progress", notes });
   }
 
-  function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
-    setProgress((prev: any) => {
-      const nextJob = { ...(prev[jobKey] || {}) };
-      items.forEach((it: any) => {
-        const st = nextJob[it.stage] || { subs: {} };
-        st.subs[it.subtask] = { status: it.status || "none", notes: it.notes || "" };
-        nextJob[it.stage] = st;
-      });
-      return { ...prev, [jobKey]: nextJob };
-    });
-  }
+function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
+  setProgress((prev: any) => {
+    // If server has nothing for this job, remove local copy completely
+    if (!items || items.length === 0) {
+      const { [jobKey]: _omit, ...rest } = prev || {};
+      return rest;
+    }
+
+    // Build a fresh job object from server items (authoritative overwrite)
+    const nextJob: any = {};
+    for (const it of items) {
+      const stage = it.stage || "";
+      if (!stage) continue;
+      const subtask = it.subtask || "";
+      if (!subtask) continue;
+
+      const st = nextJob[stage] || { subs: {} };
+      st.subs[subtask] = {
+        status: it.status || "none",
+        notes: it.notes || "",
+      };
+      nextJob[stage] = st;
+    }
+
+    return { ...(prev || {}), [jobKey]: nextJob };
+  });
+}
+
 
   async function openChecklist(r: Record<string, string>, stage: string) {
     if (!SECTION_DEFS[stage]) {
