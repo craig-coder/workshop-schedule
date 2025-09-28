@@ -409,12 +409,13 @@ export default function App() {
                             {renderCell(h, r)}
                           </td>
                         ))}
-                        <td className="px-3 py-3 border-b min-w-[220px]">
+                                                <td className="px-3 py-3 border-b min-w-[220px]">
                           <div className="w-48 h-3 bg-gray-100 rounded-full overflow-hidden">
                             <div className="h-3 bg-green-500" style={{ width: overall + "%" }} />
                           </div>
-                          <div className="text-[11px] text-gray-600 mt-1">Overall {
-                          <div className="text-[11px] text-gray-600 mt-1">Overall {overall}%</div>
+                          <div className="text-[11px] text-gray-600 mt-1">
+                            Overall {overall}%
+                          </div>
                         </td>
                       </tr>
 
@@ -430,7 +431,9 @@ export default function App() {
                                     <select
                                       className="border rounded px-2 py-1 text-sm"
                                       value={st?.status || "none"}
-                                      onChange={(e) => setSubStatus(r, openStage, name, e.target.value as any)}
+                                      onChange={(e) =>
+                                        setSubStatus(r, openStage, name, e.target.value as any)
+                                      }
                                     >
                                       <option value="none">None</option>
                                       <option value="progress">In Progress</option>
@@ -441,7 +444,9 @@ export default function App() {
                                       className="flex-1 border rounded px-2 py-1 text-sm"
                                       placeholder="Notes…"
                                       value={st?.notes || ""}
-                                      onChange={(e) => setSubNotes(r, openStage, name, e.target.value)}
+                                      onChange={(e) =>
+                                        setSubNotes(r, openStage, name, e.target.value)
+                                      }
                                     />
                                   </div>
                                 );
