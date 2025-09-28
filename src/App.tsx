@@ -1,13 +1,10 @@
 import React from "react";
 
-// ---- Server proxy (Vercel API -> Apps Script) ----
 const SYNC_URL = "/api/sheets";
-
-// Default = your workbook URL (used only to fetch the Tracker CSV)
 const DEFAULT_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091";
 
-/* ---------------- CSV helpers (Tracker) ---------------- */
+/* ---------- CSV helpers ---------- */
 function toCsvUrl(input: string) {
   try {
     const url = new URL(input.trim());
@@ -23,55 +20,52 @@ function toCsvUrl(input: string) {
 
 function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
-  if (lines.length === 0) return { headers: [], rows: [] };
+  if (!lines.length) return { headers: [], rows: [] };
 
   function tokenize(line: string) {
     const out: string[] = [];
-    let cur = "";
-    let inQ = false;
-    for (let i = 0; i < line.length; i++) {
+    let cur = "", inQ = false;
+    for (let i=0;i<line.length;i++) {
       const ch = line[i];
       if (ch === '"') {
-        if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else { inQ = !inQ; }
-      } else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
-      else { cur += ch; }
+        if (inQ && line[i+1] === '"') { cur+='"'; i++; }
+        else inQ = !inQ;
+      } else if (ch === "," && !inQ) { out.push(cur); cur=""; }
+      else cur += ch;
     }
     out.push(cur);
     return out;
   }
 
   const headers = tokenize(lines[0]).map(h => h.trim());
-  const rows: Record<string, string>[] = [];
-  for (let j = 1; j < lines.length; j++) {
+  const rows: Record<string,string>[] = [];
+  for (let j=1;j<lines.length;j++) {
     const cells = tokenize(lines[j]);
-    const obj: Record<string, string> = {};
-    for (let k = 0; k < headers.length; k++) obj[headers[k]] = cells[k] ?? "";
+    const obj: Record<string,string> = {};
+    for (let k=0;k<headers.length;k++) obj[headers[k]] = cells[k] ?? "";
     rows.push(obj);
   }
   return { headers, rows };
 }
 
-/* ---------------- App config: stages + subtasks ---------------- */
+/* ---------- Stages & subtasks ---------- */
 const STAGE_COLUMNS = [
-  "Draw","Order","CNC","Edging","Joinery","Prime","Top Coat","Wrap & Pack",
-  "Remedials","Job Complete"
+  "Draw","Order","CNC","Edging","Joinery","Prime","Top Coat","Wrap & Pack","Remedials","Job Complete"
 ] as const;
 
-// tweak these however you like later
 const SECTION_DEFS: Record<string, string[]> = {
-  Draw:        ["Cabinets Drawn","Fronts Drawn"],
-  Order:       ["LDL Order","Decormax Order","Tikkurila Order","Fitters Kit Packed & Consumables Checked"],
-  CNC:         ["Fronts Machined","Cabinets Machined"],
-  Edging:      ["Cabinets Edged","Fronts Edged"],
-  Joinery:     ["Door Panels Glued","Mitres Cut","Edge Dominos","Any Other Joinery Needed"],
-  Prime:       ["Prep","Side 1","Side 2"],
-  "Top Coat":  ["Prep","Side 1.1","Side 2.1","Prep","Side 1.2","Side 2.2"],
+  Draw: ["Cabinets Drawn","Fronts Drawn"],
+  Order: ["LDL Order","Decormax Order","Tikkurila Order","Fitters Kit Packed & Consumables Checked"],
+  CNC: ["Fronts Machined","Cabinets Machined"],
+  Edging: ["Cabinets Edged","Fronts Edged"],
+  Joinery: ["Door Panels Glued","Mitres Cut","Edge Dominos","Any Other Joinery Needed"],
+  Prime: ["Prep","Side 1","Side 2"],
+  "Top Coat": ["Prep","Side 1.1","Side 2.1","Prep","Side 1.2","Side 2.2"],
   "Wrap & Pack": ["Cabinets Wrapped","Rails Cut","Doors Wrapped","Fitters Kit Checked"],
-  Remedials:   ["Snags Found","Snags Fixed","Revisit Booked"],
+  Remedials: ["Snags Found","Snags Fixed","Revisit Booked"],
   "Job Complete": ["Client Sign-off","Photos Taken","Invoice Sent"],
 };
 
-/* ---------------- Local storage (optional) ---------------- */
 function useLocalProgress() {
   const key = "wff_progress_multi_stage_v3";
   const [state, setState] = React.useState<Record<string, any>>(() => {
@@ -81,7 +75,6 @@ function useLocalProgress() {
   return [state, setState] as const;
 }
 
-/* ---------------- Component ---------------- */
 export default function App() {
   const [sheetUrl, setSheetUrl] = React.useState(DEFAULT_SHEET_URL);
   const [headers, setHeaders] = React.useState<string[]>([]);
@@ -90,46 +83,41 @@ export default function App() {
   const [error, setError] = React.useState("");
   const [query, setQuery] = React.useState("");
 
-  // Remote job-state pulled from Apps Script:
-  // jobState[job][stage][subtask] = {status}
+  // Remote state from Apps Script
   const [jobState, setJobState] = React.useState<Record<string, any>>({});
+  const [localProgress] = useLocalProgress();
 
-  // UI state
   const [openKey, setOpenKey] = React.useState("");
   const [openStage, setOpenStage] = React.useState<string>("");
 
-  // (kept but not required now)
-  const [localProgress, setLocalProgress] = useLocalProgress();
-
-  /* --------- Load Tracker CSV (list of jobs) --------- */
+  /* ---- Load Tracker (jobs list) ---- */
   async function loadSheet() {
     try {
       setError(""); setLoading(true);
       const url = toCsvUrl(sheetUrl);
       const res = await fetch(url);
       if (!res.ok) throw new Error("Fetch failed: " + res.status);
-      const text = await res.text();
-      const parsed = parseCsv(text);
+      const parsed = parseCsv(await res.text());
       setHeaders(parsed.headers);
       setRows(parsed.rows);
-    } catch (e: any) {
+    } catch (e:any) {
       setError(e.message || "Failed to load");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
   React.useEffect(() => { loadSheet(); }, []);
 
-  /* --------- Keys & helpers --------- */
-  function getJobKey(r: Record<string, string>) {
-    // Use explicit job/client column from Tracker
+  /* ---- Keys & helpers ---- */
+  function getJobKey(r: Record<string,string>) {
     return (r["Client"] || r["client"] || r["Job"] || r["job"] || "").trim();
   }
-  function getFolderUrl(r: Record<string, string>) {
+  function getFolderUrl(r: Record<string,string>) {
     return (r["Link to Folder"] || r["link to folder"] || r["Folder"] || "").trim();
   }
+  function getDaysUntil(r: Record<string,string>) {
+    return (r["Days Until Delivery"] || r["days until delivery"] || "").trim();
+  }
 
-  /* --------- Server sync helpers --------- */
+  /* ---- Server sync ---- */
   async function pullJob(jobKey: string) {
     try {
       const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`);
@@ -138,9 +126,7 @@ export default function App() {
       if (Array.isArray(j?.items)) return { items: j.items };
       if (Array.isArray(j?.data))  return { items: j.data };
       return { items: [] };
-    } catch {
-      return { items: [] };
-    }
+    } catch { return { items: [] }; }
   }
 
   function mergeRemoteIntoState(jobKey: string, items: any[]) {
@@ -148,12 +134,10 @@ export default function App() {
       const next = { ...(prev || {}) };
       const job = next[jobKey] || {};
       items.forEach(it => {
-        const stage = it.stage;
-        const sub   = it.subtask;
-        const status = it.status || "none";
-        const stageObj = job[stage] || {};
-        stageObj[sub] = { status };
-        job[stage] = stageObj;
+        const stg = it.stage, sub = it.subtask, status = it.status || "none";
+        const stgObj = job[stg] || {};
+        stgObj[sub] = { status };
+        job[stg] = stgObj;
       });
       next[jobKey] = job;
       return next;
@@ -169,27 +153,35 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      // optimistic local merge so UI updates immediately
+      // optimistic local
       mergeRemoteIntoState(payload.job, [{stage: payload.stage, subtask: payload.subtask, status: payload.status}]);
+
+      // also send stage snapshot so the Tracker tab can be updated
+      const state = getStageProgress(payload.job, payload.stage).state;
+      await fetch(SYNC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ route: "stage:set", job: payload.job, stage: payload.stage, state }),
+      });
     } catch {}
   }
 
-  /* --------- Stage progress calculators --------- */
+  /* ---- Stage progress ---- */
   function getStageProgress(jobKey: string, stage: string) {
     const names = SECTION_DEFS[stage] || [];
-    const stageObj = jobState?.[jobKey]?.[stage] || {};
+    const stgObj = jobState?.[jobKey]?.[stage] || {};
     let done = 0, started = 0;
-    const subs: Record<string, {status: "none"|"progress"|"done"}> = {};
+    const subs: Record<string,{status:"none"|"progress"|"done"}> = {};
     for (const n of names) {
-      const st = stageObj[n]?.status || "none";
-      subs[n] = { status: st };
-      if (st === "done") done++;
-      if (st === "progress" || st === "done") started++;
+      const s = stgObj[n]?.status || "none";
+      subs[n] = { status: s };
+      if (s === "done") done++;
+      if (s === "progress" || s === "done") started++;
     }
     const total = names.length || 0;
-    const pct = total ? Math.round((done / total) * 100) : 0;
+    const pct = total ? Math.round((done/total)*100) : 0;
     const state: "none"|"partial"|"complete" =
-      (total > 0 && done === total) ? "complete" : (started > 0 ? "partial" : "none");
+      (total>0 && done===total) ? "complete" : (started>0 ? "partial" : "none");
     return { subs, pct, state };
   }
 
@@ -203,7 +195,7 @@ export default function App() {
     return count ? Math.round(total / count) : 0;
   }
 
-  /* --------- Click handlers --------- */
+  /* ---- UI actions ---- */
   async function openChecklist(r: Record<string,string>, stage: string) {
     if (!SECTION_DEFS[stage]) { alert("No subtasks configured for " + stage); return; }
     const jobKey = getJobKey(r);
@@ -214,10 +206,10 @@ export default function App() {
 
   function setSubStatus(r: Record<string,string>, stage: string, name: string, status: "none"|"progress"|"done") {
     const jobKey = getJobKey(r);
-    pushUpdate({ job: jobKey, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status });
+    pushUpdate({ job: jobKey, stage, subtask: name, status, updatedBy: r["Assigned To"] || "Unknown" });
   }
 
-  /* --------- Polling sync --------- */
+  /* ---- Background polling ---- */
   React.useEffect(() => {
     if (!rows.length) return;
     let cancelled = false;
@@ -233,24 +225,19 @@ export default function App() {
     return () => { cancelled = true; window.clearInterval(id); };
   }, [rows]);
 
-  /* --------- Rendering helpers --------- */
-  function StageButton({
-    jobKey, stage, onClick
-  }: { jobKey: string; stage: string; onClick: () => void }) {
+  /* ---- Render helpers ---- */
+  function StageButton({ jobKey, stage, onClick }:{
+    jobKey: string; stage: string; onClick: () => void;
+  }) {
     const st = getStageProgress(jobKey, stage);
-    const cls =
-      st.state === "complete" ? "bg-green-50 border-green-600" :
-      st.state === "partial"  ? "bg-orange-50 border-orange-500" :
-                                "bg-white border-gray-300";
-    const dot =
-      st.state === "complete" ? "bg-green-500 border-green-600" :
-      st.state === "partial"  ? "bg-orange-400 border-orange-500" :
-                                "bg-white border-gray-300";
+    const cls = st.state === "complete" ? "bg-green-50 border-green-600"
+             : st.state === "partial"  ? "bg-orange-50 border-orange-500"
+             :                           "bg-white border-gray-300";
+    const dot = st.state === "complete" ? "bg-green-500 border-green-600"
+             : st.state === "partial"  ? "bg-orange-400 border-orange-500"
+             :                           "bg-white border-gray-300";
     return (
-      <button
-        onClick={onClick}
-        className={`px-3 py-1.5 rounded-lg border flex items-center gap-2 ${cls}`}
-      >
+      <button onClick={onClick} className={`px-3 py-1.5 rounded-lg border flex items-center gap-2 ${cls}`}>
         <span className={`inline-block w-4 h-4 rounded border ${dot}`} />
         <span className="text-xs font-medium">{stage}</span>
       </button>
@@ -260,7 +247,7 @@ export default function App() {
   function renderStagesCell(r: Record<string,string>) {
     const jobKey = getJobKey(r);
     return (
-      <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
         {STAGE_COLUMNS.map(s => (
           <StageButton key={s} jobKey={jobKey} stage={s} onClick={() => openChecklist(r, s)} />
         ))}
@@ -274,23 +261,19 @@ export default function App() {
     return rows.filter(r => Object.values(r).some(v => String(v || "").toLowerCase().includes(q)));
   }, [rows, query]);
 
-  /* ---------------- Render ---------------- */
+  /* ---- UI ---- */
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto grid gap-6">
+      <div className="mx-auto w-full max-w-[1600px] grid gap-6">  {/* full-width feel */}
         <header className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold">Workshop Schedule — Tri-state checklists</h1>
             <p className="text-sm text-gray-600">
-              Click any stage button to open its sub-tasks. Orange = in progress, Green = complete.
+              Click any stage button to open sub-tasks. Orange = in progress, Green = complete.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <input
-              className="border rounded-lg px-3 py-2 w-[520px]"
-              value={sheetUrl}
-              onChange={(e) => setSheetUrl(e.target.value)}
-            />
+            <input className="border rounded-lg px-3 py-2 w-[520px]" value={sheetUrl} onChange={(e)=>setSheetUrl(e.target.value)} />
             <button onClick={loadSheet} disabled={loading} className="px-3 py-2 rounded-lg bg-black text-white">
               {loading ? "Loading…" : "Refresh"}
             </button>
@@ -317,7 +300,7 @@ export default function App() {
             <input
               className="border rounded-lg px-3 py-2 min-w-[240px]"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e)=>setQuery(e.target.value)}
               placeholder="Search…"
             />
           </div>
@@ -328,17 +311,19 @@ export default function App() {
             <table className="min-w-full text-sm table-auto">
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Job</th>
-                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Client</th>
-                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Link to Folder</th>
-                  <th className="text-left px-3 py-3 border-b whitespace-nowrap" style={{ minWidth: 560 }}>Stages</th>
-                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Progress</th>
+                  <th className="text-left px-3 py-3 border-b">Job</th>
+                  <th className="text-left px-3 py-3 border-b">Client</th>
+                  <th className="text-left px-3 py-3 border-b">Link to Folder</th>
+                  <th className="text-left px-3 py-3 border-b">Days Until Delivery</th>
+                  <th className="text-left px-3 py-3 border-b" style={{ minWidth: 680 }}>Stages</th>
+                  <th className="text-left px-3 py-3 border-b">Progress</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((r, i) => {
                   const jobKey = getJobKey(r);
                   const link = getFolderUrl(r);
+                  const days = getDaysUntil(r);
                   const overall = getRowOverallPct(jobKey);
                   const isOpen = openKey === jobKey && !!openStage;
 
@@ -346,10 +331,11 @@ export default function App() {
                     <React.Fragment key={i}>
                       <tr className="odd:bg-white even:bg-gray-50 border-b-2">
                         <td className="px-3 py-3 border-b whitespace-nowrap">{jobKey || "-"}</td>
-                        <td className="px-3 py-3 border-b whitespace-nowrap">{r["Client"] || r["client"] || "-"}</td>
+                        <td className="px-3 py-3 border-b whitespace-nowrap">{r["Client"] || "-"}</td>
                         <td className="px-3 py-3 border-b whitespace-nowrap">
                           {link ? <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">Open</a> : "-"}
                         </td>
+                        <td className="px-3 py-3 border-b whitespace-nowrap">{days || "-"}</td>
                         <td className="px-3 py-3 border-b">{renderStagesCell(r)}</td>
                         <td className="px-3 py-3 border-b min-w-[220px]">
                           <div className="w-48 h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -361,10 +347,10 @@ export default function App() {
 
                       {isOpen && (
                         <tr>
-                          <td colSpan={5} className="bg-gray-50">
+                          <td colSpan={6} className="bg-gray-50">
                             <div className="p-3 grid gap-3">
                               <div className="text-sm font-medium">{jobKey} — {openStage}</div>
-                              <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+                              <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                 {(SECTION_DEFS[openStage] || []).map(name => {
                                   const st = getStageProgress(jobKey, openStage).subs[name];
                                   const status = st?.status || "none";
@@ -374,7 +360,7 @@ export default function App() {
                                         <select
                                           className="border rounded px-2 py-1 text-sm"
                                           value={status}
-                                          onChange={(e) => setSubStatus(r, openStage, name, e.target.value as any)}
+                                          onChange={(e)=>setSubStatus(r, openStage, name, e.target.value as any)}
                                         >
                                           <option value="none">Not started</option>
                                           <option value="progress">In progress</option>
@@ -388,18 +374,18 @@ export default function App() {
                               </div>
                               <div className="flex items-center gap-2">
                                 <button
-                                  onClick={() => (SECTION_DEFS[openStage] || []).forEach(n => setSubStatus(r, openStage, n, "done"))}
+                                  onClick={()=> (SECTION_DEFS[openStage]||[]).forEach(n=> setSubStatus(r, openStage, n, "done"))}
                                   className="px-3 py-1 rounded-lg border text-xs"
                                 >
                                   Mark All Done
                                 </button>
                                 <button
-                                  onClick={() => (SECTION_DEFS[openStage] || []).forEach(n => setSubStatus(r, openStage, n, "none"))}
+                                  onClick={()=> (SECTION_DEFS[openStage]||[]).forEach(n=> setSubStatus(r, openStage, n, "none"))}
                                   className="px-3 py-1 rounded-lg border text-xs"
                                 >
                                   Clear All
                                 </button>
-                                <button onClick={() => { setOpenKey(""); setOpenStage(""); }} className="ml-auto px-3 py-1 rounded-lg border text-xs">
+                                <button onClick={()=>{ setOpenKey(""); setOpenStage(""); }} className="ml-auto px-3 py-1 rounded-lg border text-xs">
                                   Close
                                 </button>
                               </div>
@@ -416,7 +402,7 @@ export default function App() {
         </section>
 
         <footer className="text-xs text-gray-500 text-center">
-          Sheet is the source of truth. Sub-task updates write to the <b>WorkshopJobState</b> tab and are pulled back every 15s.
+          Sub-task changes write to <b>WorkshopJobState</b>. Stage completes also update the <b>Tracker</b> tab (TRUE/blank).
         </footer>
       </div>
     </div>
