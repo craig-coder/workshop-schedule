@@ -323,7 +323,7 @@ export default function App() {
                               </div>
                               <div className="flex items-center gap-2">
                                 <button
-                                  onClick={() => setOpenKey("") || setOpenStage("")}
+                                  onClick={() => { setOpenKey(""); setOpenStage(""); }}
                                   className="ml-auto px-3 py-1 rounded-lg border text-xs"
                                 >
                                   Close
