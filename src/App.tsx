@@ -156,14 +156,32 @@ export default function App() {
     loadSheet();
   }, []);
 
-  // 🔑 Stable job key: Client/Customer + Job where possible; fallback to Client only
-  function getJobKey(r: Record<string, string>) {
-    const client = (r["Client"] || r["Customer"] || "").trim();
-    const job = (r["Job"] || r["Project"] || r["Job Name"] || r["Order"] || "").trim();
-    const id = (r["ID"] || r["Job No"] || r["Order No"] || "").trim();
-    if (id) return id;
-    if (client || job) return [client, job].filter(Boolean).join(" — ");
-    return client || JSON.stringify({ Client: client, Job: job });
+  function cleanText(x: any) {
+  const s = String(x ?? "").trim();
+  // Treat common boolean-ish values as empty; they’re not part of the title
+  if (["true", "false", "1", "0", "✓", "✗"].includes(s.toLowerCase())) return "";
+  return s;
+}
+
+function getJobKey(r: Record<string, string>) {
+  // Prefer explicit ID if you have one
+  const id = cleanText(r["ID"] || r["Job No"] || r["Order No"]);
+
+  // Use human-readable pieces that should be text, not stage booleans
+  const client = cleanText(r["Client"] || r["Customer"]);
+  const title  = cleanText(r["Title"] || r["Job Name"] || r["Project"]); 
+  // IMPORTANT: we deliberately do NOT use r["Job"] here,
+  // because in your sheet it can be a TRUE/FALSE-like cell.
+
+  if (id) return id;
+  if (client && title) return `${client} — ${title}`;
+  if (client) return client;
+  if (title) return title;
+
+  // Last-resort fallback (rare)
+  return JSON.stringify({ Client: client, Title: title });
+}
+
   }
 
   function getStageProgress(jobKey: string, stage: string) {
