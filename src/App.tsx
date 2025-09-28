@@ -120,11 +120,20 @@ export default function App() {
     loadSheet();
   }, []);
 
-  function getJobKey(r: Record<string, string>) {
-    const a = r[colMap.id] ? String(r[colMap.id]).trim() : "";
-    const b = r[colMap.title] ? String(r[colMap.title]).trim() : "";
-    return a || b || JSON.stringify(r);
-  }
+function getJobKey(r: Record<string, string>) {
+  // Try common columns from your sheet; fall back safely.
+  const client = (r["Client"] || r["Customer"] || "").trim();
+  const job    = (r["Job"] || r["Project"] || r["Job Name"] || r["Order"] || "").trim();
+  const id     = (r["ID"] || r["Job No"] || r["Order No"] || "").trim();
+
+  // Prefer an explicit ID if present, otherwise Client — Job, otherwise Client only.
+  if (id) return id;
+  if (client || job) return [client, job].filter(Boolean).join(" — ");
+
+  // absolute fallback: stringify a couple of safe fields
+  return JSON.stringify({ Client: client || r["Client"], Job: job || r["Job"] });
+}
+
 
   function getStageProgress(jobKey: string, stage: string) {
     const s = progress[jobKey]?.[stage] ?? { subs: {} as Record<string, any> };
