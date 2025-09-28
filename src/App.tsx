@@ -104,9 +104,9 @@ export default function App() {
   React.useEffect(() => { loadSheet(); }, []);
 
 function getJobKey(r: Record<string, string>) {
-  // Prefer a stable explicit ID if your sheet has one.
-  const id =
-    (r["ID"] || r["Job ID"] || r["Order No"] || r["Job No"] || "").trim();
+  // Use the Client/Customer cell as the one true key
+  return (r["Client"] || r["Customer"] || "").trim();
+}
 
   // Fall back to the Client/Customer name only (simple and consistent).
   const client = (r["Client"] || r["Customer"] || "").trim();
