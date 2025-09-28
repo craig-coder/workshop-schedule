@@ -6,7 +6,7 @@ const SYNC_URL = "/api/sheets";
 const DEFAULT_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091";
 
-/* ---------------- CSV helpers ---------------- */
+/* ---------------- CSV LOADER (unchanged) ---------------- */
 function toCsvUrl(input: string) {
   try {
     const url = new URL(input.trim());
@@ -16,7 +16,7 @@ function toCsvUrl(input: string) {
       const gid = url.searchParams.get("gid") || "0";
       if (id) return `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${gid}`;
     }
-  } catch {}
+  } catch (_) {}
   return input;
 }
 
@@ -31,18 +31,10 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === '"') {
-        if (inQ && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQ = !inQ;
-        }
-      } else if (ch === "," && !inQ) {
-        out.push(cur);
-        cur = "";
-      } else {
-        cur += ch;
-      }
+        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+        else { inQ = !inQ; }
+      } else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
+      else { cur += ch; }
     }
     out.push(cur);
     return out;
@@ -59,7 +51,7 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-/* ---------------- App config ---------------- */
+/* ---------------- Stages / Local cache ---------------- */
 const SECTION_DEFS: Record<string, string[]> = {
   Draw: ["Cabinets Drawn", "Fronts Drawn"],
   Order: ["LDL Order", "Decormax Order", "Tikkurila Order", "Fitters Kit Packed & Consumables Checked"],
@@ -74,52 +66,58 @@ const SECTION_DEFS: Record<string, string[]> = {
 };
 const STAGE_COLUMNS = ["Draw", "Order", "CNC", "Edging", "Joinery", "Prime", "Top Coat", "Wrap & Pack"] as const;
 
-/* ---------------- Local state helper ---------------- */
 function useLocalProgress() {
   const key = "wff_progress_multi_stage_v3";
   const [state, setState] = React.useState<Record<string, any>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(key) || "{}");
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; }
   });
-  React.useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(state));
-  }, [state]);
+  React.useEffect(() => { localStorage.setItem(key, JSON.stringify(state)); }, [state]);
   return [state, setState] as const;
 }
 
-/* ---------------- API helpers ---------------- */
+/* ---------------- Helpers: job key (stable) ---------------- */
+function cleanText(x: unknown) {
+  const s = String(x ?? "").trim();
+  if (["true", "false", "1", "0", "✓", "✗"].includes(s.toLowerCase())) return "";
+  return s;
+}
+
+function getJobKey(r: Record<string, string>) {
+  const id = cleanText(r["ID"] || r["Job No"] || r["Order No"]);
+  const client = cleanText(r["Client"] || r["Customer"]);
+  const title  = cleanText(r["Title"] || r["Job Name"] || r["Project"]);
+  // NOTE: intentionally not using r["Job"] (it sometimes holds TRUE/FALSE in your sheet)
+
+  if (id) return String(id);
+  if (client && title) return `${client} — ${title}`;
+  if (client) return String(client);
+  if (title) return String(title);
+  return JSON.stringify({ Client: client, Title: title });
+}
+
+/* ---------------- API: pull/push via proxy ---------------- */
 async function pullJob(jobKey: string) {
   try {
-    const res = await fetch(
-      `${SYNC_URL}?job=${encodeURIComponent(jobKey)}&_=${Date.now()}`,
-      { method: "GET", cache: "no-store" } // force fresh read
-    );
+    const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: "GET" });
     if (!res.ok) return null;
     const j = await res.json();
     if (Array.isArray(j?.items)) return { items: j.items };
-    if (Array.isArray(j?.data)) return { items: j.data };
+    if (Array.isArray(j?.data))  return { items: j.data };
     return { items: [] };
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 async function pushUpdate(payload: any) {
   try {
     await fetch(SYNC_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
     });
-  } catch {
-    // ignore to keep UI responsive
-  }
+  } catch { /* ignore */ }
 }
 
-/* ---------------- App ---------------- */
+/* ---------------- Component ---------------- */
 export default function App() {
   const [sheetUrl, setSheetUrl] = React.useState(DEFAULT_SHEET_URL);
   const [headers, setHeaders] = React.useState<string[]>([]);
@@ -130,15 +128,12 @@ export default function App() {
   const [progress, setProgress] = useLocalProgress();
   const [openKey, setOpenKey] = React.useState("");
   const [openStage, setOpenStage] = React.useState<string>("");
-  const [isSyncing, setIsSyncing] = React.useState(false);
-  const [lastSync, setLastSync] = React.useState<string>("");
 
   const colMap = { title: "Job", status: "Status", start: "Start", end: "End", assignee: "Assigned To", id: "ID" };
 
   async function loadSheet() {
     try {
-      setError("");
-      setLoading(true);
+      setError(""); setLoading(true);
       const url = toCsvUrl(sheetUrl);
       const res = await fetch(url);
       if (!res.ok) throw new Error("Fetch failed: " + res.status);
@@ -146,71 +141,35 @@ export default function App() {
       const parsed = parseCsv(text);
       setHeaders(parsed.headers);
       setRows(parsed.rows);
-    } catch (e: any) {
-      setError(e.message || "Failed to load");
-    } finally {
-      setLoading(false);
-    }
+    } catch (e: any) { setError(e.message || "Failed to load"); }
+    finally { setLoading(false); }
   }
-  React.useEffect(() => {
-    loadSheet();
-  }, []);
+  React.useEffect(() => { loadSheet(); }, []);
 
-  function cleanText(x: any) {
-  const s = String(x ?? "").trim();
-  // Treat common boolean-ish values as empty; they’re not part of the title
-  if (["true", "false", "1", "0", "✓", "✗"].includes(s.toLowerCase())) return "";
-  return s;
-}
-
-function getJobKey(r: Record<string, string>) {
-  // Prefer explicit ID if you have one
-  const id = cleanText(r["ID"] || r["Job No"] || r["Order No"]);
-
-  // Use human-readable pieces that should be text, not stage booleans
-  const client = cleanText(r["Client"] || r["Customer"]);
-  const title  = cleanText(r["Title"] || r["Job Name"] || r["Project"]); 
-  // IMPORTANT: we deliberately do NOT use r["Job"] here,
-  // because in your sheet it can be a TRUE/FALSE-like cell.
-
-  if (id) return id;
-  if (client && title) return `${client} — ${title}`;
-  if (client) return client;
-  if (title) return title;
-
-  // Last-resort fallback (rare)
-  return JSON.stringify({ Client: client, Title: title });
-}
-
+  /* ---------- progress math ---------- */
   function getStageProgress(jobKey: string, stage: string) {
     const s = progress[jobKey]?.[stage] ?? { subs: {} as Record<string, any> };
     const names = SECTION_DEFS[stage] || [];
     const map: Record<string, { status: "none" | "progress" | "done"; notes?: string }> = {};
-    let done = 0,
-      started = 0;
+    let done = 0, started = 0;
     for (const n of names) {
       const raw = s.subs?.[n];
       let status: "none" | "progress" | "done" = "none";
       let notes: string | undefined;
-      if (raw && typeof raw === "object") {
-        status = (raw.status as any) || "none";
-        notes = raw.notes;
-      } else if (raw === true) {
-        status = "done";
-      }
+      if (raw && typeof raw === "object") { status = (raw.status as any) || "none"; notes = raw.notes; }
+      else if (raw === true) { status = "done"; }
       map[n] = { status, notes };
       if (status === "done") done++;
       if (status === "progress" || status === "done") started++;
     }
     const total = names.length;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    const state: "none" | "partial" | "complete" = done === total && total > 0 ? "complete" : started > 0 ? "partial" : "none";
+    const state: "none" | "partial" | "complete" = (done === total && total > 0) ? "complete" : (started > 0 ? "partial" : "none");
     return { subs: map, pct, state };
   }
 
   function getRowOverallPct(jobKey: string) {
-    let total = 0,
-      count = 0;
+    let total = 0, count = 0;
     for (const stage of STAGE_COLUMNS) {
       if ((SECTION_DEFS[stage] || []).length === 0) continue;
       total += getStageProgress(jobKey, stage).pct;
@@ -219,6 +178,7 @@ function getJobKey(r: Record<string, string>) {
     return count > 0 ? Math.round(total / count) : 0;
   }
 
+  /* ---------- write helpers ---------- */
   function setSubStatus(r: Record<string, string>, stage: string, name: string, status: "none" | "progress" | "done") {
     const job = getJobKey(r);
     setProgress((prev: any) => {
@@ -241,162 +201,110 @@ function getJobKey(r: Record<string, string>) {
     pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status: "progress", notes });
   }
 
-function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
-  setProgress((prev: any) => {
-    // If server has nothing for this job, remove local copy completely
-    if (!items || items.length === 0) {
-      const { [jobKey]: _omit, ...rest } = prev || {};
-      return rest;
-    }
+  /* ---------- MERGE MODES ---------- */
+  // OVERWRITE: used when opening a job or pressing Sync Now
+  function overwriteFromServer(jobKey: string, items: any[]) {
+    setProgress((prev: any) => {
+      if (!items || items.length === 0) {
+        const { [jobKey]: _omit, ...rest } = prev || {};
+        return rest;
+      }
+      const nextJob: any = {};
+      for (const it of items) {
+        const stage = it.stage || "";
+        const sub   = it.subtask || "";
+        if (!stage || !sub) continue;
+        const st = nextJob[stage] || { subs: {} };
+        st.subs[sub] = { status: it.status || "none", notes: it.notes || "" };
+        nextJob[stage] = st;
+      }
+      return { ...(prev || {}), [jobKey]: nextJob };
+    });
+  }
 
-    // Build a fresh job object from server items (authoritative overwrite)
-    const nextJob: any = {};
-    for (const it of items) {
-      const stage = it.stage || "";
-      if (!stage) continue;
-      const subtask = it.subtask || "";
-      if (!subtask) continue;
+  // SOFT MERGE: used by background poll – do NOT clear on empty
+  function mergeIfAny(jobKey: string, items: any[]) {
+    if (!items || items.length === 0) return;
+    setProgress((prev: any) => {
+      const nextJob = { ...(prev?.[jobKey] || {}) };
+      for (const it of items) {
+        const stage = it.stage || "";
+        const sub   = it.subtask || "";
+        if (!stage || !sub) continue;
+        const st = nextJob[stage] || { subs: {} };
+        st.subs[sub] = { status: it.status || "none", notes: it.notes || "" };
+        nextJob[stage] = st;
+      }
+      return { ...(prev || {}), [jobKey]: nextJob };
+    });
+  }
 
-      const st = nextJob[stage] || { subs: {} };
-      st.subs[subtask] = {
-        status: it.status || "none",
-        notes: it.notes || "",
-      };
-      nextJob[stage] = st;
-    }
-
-    return { ...(prev || {}), [jobKey]: nextJob };
-  });
-}
-
-
+  /* ---------- Open checklist (overwrite) ---------- */
   async function openChecklist(r: Record<string, string>, stage: string) {
-    if (!SECTION_DEFS[stage]) {
-      alert("No subtasks configured for " + stage);
-      return;
-    }
+    if (!SECTION_DEFS[stage]) { alert("No subtasks configured for " + stage); return; }
     const jobKey = getJobKey(r);
     setOpenKey(jobKey);
     setOpenStage(stage);
+
     const remote = await pullJob(jobKey);
-    if (remote && Array.isArray(remote.items)) {
-      mergeRemoteIntoLocal(jobKey, remote.items);
-    }
+    if (remote && Array.isArray(remote.items)) overwriteFromServer(jobKey, remote.items);
   }
 
-  // Poll the currently open checklist every 10s
+  /* ---------- Poll the open job every 10s (overwrite) ---------- */
   React.useEffect(() => {
     if (!openKey) return;
     let cancelled = false;
 
     async function refresh() {
       const remote = await pullJob(openKey);
-      if (!cancelled && remote && Array.isArray(remote.items)) {
-        mergeRemoteIntoLocal(openKey, remote.items);
-      }
+      if (!cancelled && remote && Array.isArray(remote.items)) overwriteFromServer(openKey, remote.items);
     }
 
     refresh();
     const id = window.setInterval(refresh, 10000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
+    return () => { cancelled = true; window.clearInterval(id); };
   }, [openKey]);
 
-  // Global sync every 15s across all jobs
+  /* ---------- Global poll every 15s (soft merge) ---------- */
   React.useEffect(() => {
     if (!rows.length) return;
     let cancelled = false;
 
     async function refreshAll() {
+      console.log("Global sync tick — refreshing all jobs");
       for (const r of rows) {
         const jobKey = getJobKey(r);
         if (!jobKey) continue;
         const remote = await pullJob(jobKey);
-        if (!cancelled && remote && Array.isArray(remote.items)) {
-          mergeRemoteIntoLocal(jobKey, remote.items);
+        if (cancelled) return;
+        if (remote && Array.isArray(remote.items)) {
+          console.log("  → fetched", jobKey, "items:", remote.items.length);
+          mergeIfAny(jobKey, remote.items);
         }
       }
-      setLastSync(new Date().toLocaleTimeString());
     }
 
     const id = window.setInterval(refreshAll, 15000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
+    return () => { cancelled = true; window.clearInterval(id); };
   }, [rows]);
 
-  // Extra: sync on focus/visibility/online (mobile-friendly)
-  React.useEffect(() => {
-    if (!rows.length) return;
-
-    async function refreshAllOnce() {
-      for (const r of rows) {
-        const jobKey = getJobKey(r);
-        if (!jobKey) continue;
-        const remote = await pullJob(jobKey);
-        if (remote?.items) mergeRemoteIntoLocal(jobKey, remote.items);
-      }
-      setLastSync(new Date().toLocaleTimeString());
-    }
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") refreshAllOnce();
-    };
-    const onFocus = () => refreshAllOnce();
-    const onOnline = () => refreshAllOnce();
-
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("online", onOnline);
-
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("online", onOnline);
-    };
-  }, [rows]);
-
-  // Manual sync button
+  /* ---------- Optional: Sync now (overwrite all) ---------- */
   async function syncNow() {
-    if (isSyncing) return;
-    setIsSyncing(true);
-
-    try {
-      if (!rows.length) await loadSheet();
-
-      for (const r of rows) {
-        const jobKey = getJobKey(r);
-        if (!jobKey) continue;
-        const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}&_=${Date.now()}`, {
-          method: "GET",
-          cache: "no-store",
-        });
-        if (!res.ok) continue;
-        const j = await res.json();
-        const items = Array.isArray(j?.items) ? j.items : Array.isArray(j?.data) ? j.data : [];
-        if (items.length) mergeRemoteIntoLocal(jobKey, items);
-      }
-
-      setLastSync(new Date().toLocaleTimeString());
-    } catch (e) {
-      console.error("Sync now error:", e);
-    } finally {
-      setIsSyncing(false);
+    // ensure the grid is loaded
+    if (!rows.length) await loadSheet();
+    for (const r of rows) {
+      const jobKey = getJobKey(r);
+      if (!jobKey) continue;
+      const remote = await pullJob(jobKey);
+      if (remote && Array.isArray(remote.items)) overwriteFromServer(jobKey, remote.items);
     }
   }
 
+  /* ---------- UI ---------- */
   function BoolCell({ on }: { on: boolean }) {
     return (
-      <span
-        className={
-          on
-            ? "inline-block w-4 h-4 rounded border bg-green-500 border-green-600"
-            : "inline-block w-4 h-4 rounded border bg-white border-gray-300"
-        }
-      />
+      <span className={on ? "inline-block w-4 h-4 rounded border bg-green-500 border-green-600"
+                          : "inline-block w-4 h-4 rounded border bg-white border-gray-300"} />
     );
   }
 
@@ -404,18 +312,12 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
     if ((STAGE_COLUMNS as readonly string[]).includes(h)) {
       const key = getJobKey(r);
       const st = getStageProgress(key, h);
-      const cls =
-        st.state === "complete"
-          ? "bg-green-50 border-green-600"
-          : st.state === "partial"
-          ? "bg-orange-50 border-orange-500"
-          : "bg-white border-gray-300";
-      const box =
-        st.state === "complete"
-          ? "bg-green-500 border-green-600"
-          : st.state === "partial"
-          ? "bg-orange-400 border-orange-500"
-          : "bg-white border-gray-300";
+      const cls = st.state === "complete"
+        ? "bg-green-50 border-green-600"
+        : (st.state === "partial" ? "bg-orange-50 border-orange-500" : "bg-white border-gray-300");
+      const box = st.state === "complete"
+        ? "bg-green-500 border-green-600"
+        : (st.state === "partial" ? "bg-orange-400 border-orange-500" : "bg-white border-gray-300");
       return (
         <button onClick={() => openChecklist(r, h)} className={`px-2 py-1 rounded-lg border flex items-center gap-2 ${cls}`}>
           <span className={`inline-block w-4 h-4 rounded border ${box}`} />
@@ -444,29 +346,16 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
           <div>
             <h1 className="text-2xl font-semibold">Workshop Schedule — Tri-state checklists</h1>
             <p className="text-sm text-gray-600">
-              Click any stage cell (Draw, Order, CNC, Edging, Joinery, Prime, Top Coat, Wrap &amp; Pack) to open sub-tasks.
+              Click any stage cell (Draw, Order, CNC, Edging, Joinery, Prime, Top Coat, Wrap & Pack) to open sub-tasks.
               Orange = in progress, Green = complete.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <input
-              className="border rounded-lg px-3 py-2 w-[520px]"
-              value={sheetUrl}
-              onChange={(e) => setSheetUrl(e.target.value)}
-            />
+            <input className="border rounded-lg px-3 py-2 w-[520px]" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
             <button onClick={loadSheet} disabled={loading} className="px-3 py-2 rounded-lg bg-black text-white">
               {loading ? "Loading…" : "Refresh"}
             </button>
-            <button
-              type="button"
-              onClick={syncNow}
-              disabled={isSyncing}
-              className="px-3 py-2 rounded-lg border touch-manipulation"
-              style={{ minWidth: 110 }}
-            >
-              {isSyncing ? "Syncing…" : "Sync now"}
-            </button>
-            {lastSync && <span className="text-xs text-gray-500 ml-2">Last sync: {lastSync}</span>}
+            <button onClick={syncNow} className="px-3 py-2 rounded-lg border">Sync now</button>
           </div>
         </header>
 
@@ -474,12 +363,8 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
 
         <section className="bg-white rounded-2xl shadow p-4 grid gap-3">
           <div className="flex flex-wrap gap-3 items-center">
-            <input
-              className="border rounded-lg px-3 py-2 min-w-[240px]"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search…"
-            />
+            <input className="border rounded-lg px-3 py-2 min-w-[240px]" value={query}
+                   onChange={(e) => setQuery(e.target.value)} placeholder="Search…" />
           </div>
         </section>
 
@@ -488,11 +373,7 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-100">
                 <tr>
-                  {headers.map((h) => (
-                    <th key={h} className="text-left px-3 py-3 border-b whitespace-nowrap">
-                      {h}
-                    </th>
-                  ))}
+                  {headers.map((h) => (<th key={h} className="text-left px-3 py-3 border-b whitespace-nowrap">{h}</th>))}
                   <th className="text-left px-3 py-3 border-b">Progress</th>
                 </tr>
               </thead>
@@ -505,9 +386,7 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
                     <React.Fragment key={i}>
                       <tr className="odd:bg-white even:bg-gray-50 border-b-2">
                         {headers.map((h) => (
-                          <td key={h} className="px-3 py-3 border-b whitespace-nowrap">
-                            {renderCell(h, r)}
-                          </td>
+                          <td key={h} className="px-3 py-3 border-b whitespace-nowrap">{renderCell(h, r)}</td>
                         ))}
                         <td className="px-3 py-3 border-b min-w-[220px]">
                           <div className="w-48 h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -521,9 +400,7 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
                         <tr>
                           <td colSpan={headers.length + 1} className="bg-gray-50">
                             <div className="p-3 grid gap-3">
-                              <div className="text-sm font-medium">
-                                {r[colMap.title] || "Job"} — {openStage}
-                              </div>
+                              <div className="text-sm font-medium">{r[colMap.title] || "Job"} — {openStage}</div>
                               <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
                                 {(SECTION_DEFS[openStage] || []).map((name) => {
                                   const sub = getStageProgress(key, openStage).subs[name];
@@ -532,11 +409,8 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
                                   return (
                                     <div key={name} className="bg-white border rounded-lg p-3 grid gap-2">
                                       <div className="flex items-center gap-2">
-                                        <select
-                                          className="border rounded px-2 py-1 text-sm"
-                                          value={status}
-                                          onChange={(e) => setSubStatus(r, openStage, name, e.target.value as any)}
-                                        >
+                                        <select className="border rounded px-2 py-1 text-sm" value={status}
+                                                onChange={(e) => setSubStatus(r, openStage, name, e.target.value as any)}>
                                           <option value="none">Not started</option>
                                           <option value="progress">In progress</option>
                                           <option value="done">Done</option>
@@ -544,43 +418,20 @@ function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
                                         <span className="text-sm">{name}</span>
                                       </div>
                                       {status === "progress" && (
-                                        <input
-                                          className="border rounded px-2 py-1 text-sm w-full"
-                                          placeholder="Notes…"
-                                          value={notes}
-                                          onChange={(e) => setSubNotes(r, openStage, name, e.target.value)}
-                                        />
+                                        <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Notes…"
+                                               value={notes} onChange={(e) => setSubNotes(r, openStage, name, e.target.value)} />
                                       )}
                                     </div>
                                   );
                                 })}
                               </div>
                               <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() =>
-                                    (SECTION_DEFS[openStage] || []).forEach((n) => setSubStatus(r, openStage, n, "done"))
-                                  }
-                                  className="px-3 py-1 rounded-lg border text-xs"
-                                >
-                                  Mark All Done
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    (SECTION_DEFS[openStage] || []).forEach((n) => setSubStatus(r, openStage, n, "none"))
-                                  }
-                                  className="px-3 py-1 rounded-lg border text-xs"
-                                >
-                                  Clear All
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setOpenKey("");
-                                    setOpenStage("");
-                                  }}
-                                  className="ml-auto px-3 py-1 rounded-lg border text-xs"
-                                >
-                                  Close
-                                </button>
+                                <button onClick={() => (SECTION_DEFS[openStage] || []).forEach((n) => setSubStatus(r, openStage, n, "done"))}
+                                        className="px-3 py-1 rounded-lg border text-xs">Mark All Done</button>
+                                <button onClick={() => (SECTION_DEFS[openStage] || []).forEach((n) => setSubStatus(r, openStage, n, "none"))}
+                                        className="px-3 py-1 rounded-lg border text-xs">Clear All</button>
+                                <button onClick={() => { setOpenKey(""); setOpenStage(""); }}
+                                        className="ml-auto px-3 py-1 rounded-lg border text-xs">Close</button>
                               </div>
                             </div>
                           </td>
