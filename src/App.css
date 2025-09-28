@@ -1,0 +1,70 @@
+/* src/App.css */
+.app {
+  padding: 16px;
+  max-width: none;
+  margin: 0 auto;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+table.jobs {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+table.jobs th,
+table.jobs td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+  font-size: 14px;
+}
+
+button.cell-none,
+button.cell-progress,
+button.cell-done {
+  min-width: 90px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+button.cell-progress {
+  background: #fff7ed;
+  border-color: #fb923c;
+}
+
+button.cell-done {
+  background: #ecfdf5;
+  border-color: #34d399;
+}
+
+.subs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.sub {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sub.cell-progress {
+  background: #fff7ed;
+  border-color: #fb923c;
+}
+
+.sub.cell-done {
+  background: #ecfdf5;
+  border-color: #34d399;
+}
