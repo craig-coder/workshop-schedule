@@ -265,24 +265,41 @@ export default function App() {
     return () => { cancelled = true; window.clearInterval(id); };
   }, [openKey]);
 
-  /* ---------- Global poll every 15s (soft merge) ---------- */
-  React.useEffect(() => {
-    if (!rows.length) return;
-    let cancelled = false;
+// ---------- Global poll every 15s (authoritative if server has data) ----------
+React.useEffect(() => {
+  if (!rows.length) return;
+  let cancelled = false;
 
-    async function refreshAll() {
-      console.log("Global sync tick — refreshing all jobs");
-      for (const r of rows) {
-        const jobKey = getJobKey(r);
-        if (!jobKey) continue;
-        const remote = await pullJob(jobKey);
-        if (cancelled) return;
-        if (remote && Array.isArray(remote.items)) {
-          console.log("  → fetched", jobKey, "items:", remote.items.length);
-          mergeIfAny(jobKey, remote.items);
-        }
+  async function refreshAll() {
+    console.log("Global sync tick — refreshing all jobs");
+    for (const r of rows) {
+      const jobKey = getJobKey(r);
+      if (!jobKey) continue;
+      const remote = await pullJob(jobKey);
+      if (cancelled) return;
+
+      // If the server has any items for this job, make the UI match the server exactly.
+      if (remote && Array.isArray(remote.items) && remote.items.length > 0) {
+        console.log(`  → fetched ${jobKey} — ${remote.items.length} items (OVERWRITE)`);
+        overwriteFromServer(jobKey, remote.items);
+      } else {
+        // No items on server → leave local state as-is (don't clear)
+        console.log(`  → fetched ${jobKey} — 0 items (skip clear)`);
       }
     }
+  }
+
+  // kick one run soon after mount, then every 15s
+  const first = setTimeout(refreshAll, 500);
+  const id = window.setInterval(refreshAll, 15000);
+
+  return () => {
+    clearTimeout(first);
+    clearInterval(id);
+    cancelled = true;
+  };
+}, [rows]);
+
 
     const id = window.setInterval(refreshAll, 15000);
     return () => { cancelled = true; window.clearInterval(id); };
