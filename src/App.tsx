@@ -1,19 +1,13 @@
 import React from "react";
 
-/* ==============================
-   Config
-============================== */
-
-// Vercel API proxy that forwards to your Apps Script
+// Vercel proxy to your Apps Script
 const SYNC_URL = "/api/sheets";
 
-// Default to your Tracker tab (CSV view)
+// Your Google Sheet URL (Tracker tab is read as CSV)
 const DEFAULT_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091";
 
-/* ==============================
-   CSV helpers
-============================== */
+/* ---------------- CSV helpers ---------------- */
 
 function toCsvUrl(input: string) {
   try {
@@ -24,13 +18,14 @@ function toCsvUrl(input: string) {
       const gid = url.searchParams.get("gid") || "0";
       if (id) return `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${gid}`;
     }
-  } catch (_) {}
+  } catch {}
   return input;
 }
 
 function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
   if (lines.length === 0) return { headers: [], rows: [] };
+
   function tokenize(line: string) {
     const out: string[] = [];
     let cur = "";
@@ -54,6 +49,7 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
     out.push(cur);
     return out;
   }
+
   const headers = tokenize(lines[0]).map((h) => h.trim());
   const rows: Record<string, string>[] = [];
   for (let j = 1; j < lines.length; j++) {
@@ -65,30 +61,19 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-/* ==============================
-   Stages + Sub-sections
-============================== */
+/* ---------------- Stages & sub-tasks ---------------- */
 
 const SECTION_DEFS: Record<string, string[]> = {
   Draw: ["Cabinets Drawn", "Fronts Drawn"],
-
   Order: ["LDL", "Handles", "Decormax", "Hafele", "Consumables Check", "Misc"],
-
   CNC: ["Fronts", "Cabinets"],
-
   Edging: ["Fronts", "Cabinets"],
-
   Joinery: ["End Dominos", "Angles Cut", "Drawer Packs", "Other"],
-
   Prime: ["Prep", "Side 1", "Side 2"],
-
-  // If you want “Side 2.1” twice, change "Side 1.2" back to "Side 2.1".
   "Top Coat": ["Prep 1", "Side 1.1", "Side 2.1", "Prep 2", "Side 1.2", "Side 2.2"],
-
   "Wrap & Pack": ["Fronts Packed", "Cabinets Packed", "Fitters Kit Packed", "Rails Cut", "Loaded"],
-
-  Remedials: [],
-  "Job Complete": [],
+  Remedials: ["Remedials"],
+  "Job Complete": ["Job Complete"],
 };
 
 const STAGE_COLUMNS = [
@@ -104,9 +89,7 @@ const STAGE_COLUMNS = [
   "Job Complete",
 ] as const;
 
-/* ==============================
-   Local storage for in-flight UI
-============================== */
+/* ---------------- Local cache ---------------- */
 
 function useLocalProgress() {
   const key = "wff_progress_multi_stage_v3";
@@ -123,9 +106,7 @@ function useLocalProgress() {
   return [state, setState] as const;
 }
 
-/* ==============================
-   App
-============================== */
+/* ---------------- App ---------------- */
 
 export default function App() {
   const [sheetUrl, setSheetUrl] = React.useState(DEFAULT_SHEET_URL);
@@ -160,23 +141,13 @@ export default function App() {
     loadSheet();
   }, []);
 
-  /* ---------- table headers to show (hide Job when Client exists) ---------- */
-  const visibleHeaders = React.useMemo(() => {
-    if (headers.includes("Client")) return headers.filter((h) => h !== "Job");
-    return headers;
-  }, [headers]);
-
-  /* ---------- job identity (prefer Client) ---------- */
+  /* ---------- key derivation ---------- */
   function getJobKey(r: Record<string, string>) {
-    const client = (r["Client"] || r["Client "] || "").trim();
-    const id = (r["ID"] || r["Job No"] || r["Order No"] || "").trim();
-    if (id) return id;
-    if (client) return client;
-    // last-resort fallback
-    return JSON.stringify({ Client: client || r["Job"] || r["Project"] || "" });
+    // we treat Client as the job key (you asked to keep one or the other)
+    return (r["Client"] || r["Job"] || "").trim();
   }
 
-  /* ---------- compute stage progress ---------- */
+  /* ---------- progress computation ---------- */
   function getStageProgress(jobKey: string, stage: string) {
     const s = progress[jobKey]?.[stage] ?? { subs: {} as Record<string, any> };
     const names = SECTION_DEFS[stage] || [];
@@ -186,11 +157,8 @@ export default function App() {
     for (const n of names) {
       const raw = s.subs?.[n];
       let status: "none" | "progress" | "done" = "none";
-      if (raw && typeof raw === "object") {
-        status = (raw.status as any) || "none";
-      } else if (raw === true) {
-        status = "done";
-      }
+      if (raw && typeof raw === "object") status = (raw.status as any) || "none";
+      else if (raw === true) status = "done";
       map[n] = { status };
       if (status === "done") done++;
       if (status === "progress" || status === "done") started++;
@@ -213,8 +181,45 @@ export default function App() {
     return count > 0 ? Math.round(total / count) : 0;
   }
 
-  /* ---------- server sync helpers ---------- */
+  /* ---------- writes ---------- */
+  function setSubStatus(
+    r: Record<string, string>,
+    stage: string,
+    name: string,
+    status: "none" | "progress" | "done"
+  ) {
+    const job = getJobKey(r);
+    setProgress((prev: any) => {
+      const cur = prev[job]?.[stage] ?? { subs: {} };
+      const next = { subs: { ...(cur.subs || {}), [name]: { status } } };
+      return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
+    });
+    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status });
+  }
 
+  async function pushUpdate(payload: any) {
+    try {
+      const res = await fetch(SYNC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        console.warn("[pushUpdate] HTTP", res.status, payload);
+        return;
+      }
+      const j = await res.json();
+      if (!j?.ok) {
+        console.warn("[pushUpdate] Script error:", j);
+      } else {
+        console.log("[pushUpdate] ok:", j);
+      }
+    } catch (err) {
+      console.warn("[pushUpdate] network error", err);
+    }
+  }
+
+  /* ---------- server sync ---------- */
   async function pullJob(jobKey: string) {
     try {
       const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: "GET" });
@@ -240,46 +245,6 @@ export default function App() {
     });
   }
 
-  async function pushUpdate(payload: any) {
-    try {
-      await fetch(SYNC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } catch {
-      // ignore network errors so UI stays responsive
-    }
-  }
-
-  // After local change, send a stage snapshot back to Tracker (none|partial|complete)
-  function sendStageSnapshot(job: string, stage: string) {
-    const state = getStageProgress(job, stage).state;
-    pushUpdate({ route: "stage:set", job, stage, state });
-  }
-
-  /* ---------- UI actions ---------- */
-
-  function setSubStatus(
-    r: Record<string, string>,
-    stage: string,
-    name: string,
-    status: "none" | "progress" | "done"
-  ) {
-    const job = getJobKey(r);
-    setProgress((prev: any) => {
-      const cur = prev[job]?.[stage] ?? { subs: {} };
-      const next = { subs: { ...(cur.subs || {}), [name]: { status } } };
-      return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
-    });
-
-    // Upsert single subtask to WorkshopJobState
-    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status });
-
-    // Snapshot the whole stage state back to Tracker
-    sendStageSnapshot(job, stage);
-  }
-
   async function openChecklist(r: Record<string, string>, stage: string) {
     if (!SECTION_DEFS[stage]) {
       alert("No subtasks configured for " + stage);
@@ -294,18 +259,16 @@ export default function App() {
     }
   }
 
-  // Poll the currently open checklist every 10s
+  // Poll open job every 10s
   React.useEffect(() => {
     if (!openKey) return;
     let cancelled = false;
-
     async function refresh() {
       const remote = await pullJob(openKey);
       if (!cancelled && remote && Array.isArray(remote.items)) {
         mergeRemoteIntoLocal(openKey, remote.items);
       }
     }
-
     refresh();
     const id = window.setInterval(refresh, 10000);
     return () => {
@@ -321,6 +284,7 @@ export default function App() {
     async function refreshAll() {
       for (const r of rows) {
         const jobKey = getJobKey(r);
+        if (!jobKey) continue;
         const remote = await pullJob(jobKey);
         if (!cancelled && remote && Array.isArray(remote.items)) {
           mergeRemoteIntoLocal(jobKey, remote.items);
@@ -334,73 +298,18 @@ export default function App() {
     };
   }, [rows]);
 
-  /* ---------- rendering ---------- */
-
-  function BoolCell({ on }: { on: boolean }) {
-    return (
-      <span
-        className={
-          on
-            ? "inline-block w-4 h-4 rounded border bg-green-500 border-green-600"
-            : "inline-block w-4 h-4 rounded border bg-white border-gray-300"
-        }
-      />
-    );
-  }
-
-  function renderCell(h: string, r: Record<string, string>) {
-    // make "Link to Folder" a hyperlink
-    if (h.toLowerCase().includes("link") && r[h]) {
-      const href = r[h];
-      return (
-        <a className="text-blue-600 hover:underline" href={href} target="_blank" rel="noreferrer">
-          Open
-        </a>
-      );
-    }
-
-    // stages column buttons
-    if ((STAGE_COLUMNS as readonly string[]).includes(h)) {
-      const key = getJobKey(r);
-      const st = getStageProgress(key, h);
-      const cls =
-        st.state === "complete"
-          ? "bg-green-50 border-green-600"
-          : st.state === "partial"
-          ? "bg-orange-50 border-orange-500"
-          : "bg-white border-gray-300";
-      const box =
-        st.state === "complete"
-          ? "bg-green-500 border-green-600"
-          : st.state === "partial"
-          ? "bg-orange-400 border-orange-500"
-          : "bg-white border-gray-300";
-      return (
-        <button onClick={() => openChecklist(r, h)} className={`px-2 py-1 rounded-lg border flex items-center gap-2 ${cls}`}>
-          <span className={`inline-block w-4 h-4 rounded border ${box}`} />
-          <span className="text-xs font-medium">{h}</span>
-        </button>
-      );
-    }
-
-    const v = r[h];
-    if (v === undefined || v === null) return null;
-    const s = String(v).trim().toLowerCase();
-    if (["true", "yes", "1", "✓"].includes(s)) return <BoolCell on={true} />;
-    if (["false", "no", "0", "✗"].includes(s)) return <BoolCell on={false} />;
-    return v;
-  }
-
+  /* ---------- filtering ---------- */
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => Object.values(r).some((v) => String(v || "").toLowerCase().includes(q)));
   }, [rows, query]);
 
+  /* ---------------- UI ---------------- */
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      {/* full width container */}
-      <div className="max-w-none w-full mx-auto grid gap-6">
+      <div className="max-w-[1400px] mx-auto grid gap-6"> {/* full width-ish */}
         <header className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold">Workshop Schedule — Tri-state checklists</h1>
@@ -416,19 +325,6 @@ export default function App() {
             />
             <button onClick={loadSheet} disabled={loading} className="px-3 py-2 rounded-lg bg-black text-white">
               {loading ? "Loading…" : "Refresh"}
-            </button>
-            <button
-              onClick={() => {
-                rows.forEach((r) => {
-                  const jobKey = getJobKey(r);
-                  pullJob(jobKey).then((remote) => {
-                    if (remote && Array.isArray(remote.items)) mergeRemoteIntoLocal(jobKey, remote.items);
-                  });
-                });
-              }}
-              className="px-3 py-2 rounded-lg bg-blue-500 text-white"
-            >
-              Sync Now
             </button>
           </div>
         </header>
@@ -446,17 +342,17 @@ export default function App() {
           </div>
         </section>
 
+        {/* COMPACT TABLE */}
         <section className="bg-white rounded-2xl shadow p-4">
           <div className="overflow-auto border rounded-xl">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-100">
                 <tr>
-                  {visibleHeaders.map((h) => (
-                    <th key={h} className="text-left px-3 py-3 border-b whitespace-nowrap">
-                      {h}
-                    </th>
-                  ))}
-                  <th className="text-left px-3 py-3 border-b">Progress</th>
+                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Client</th>
+                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Link to Folder</th>
+                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Days Until Delivery</th>
+                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Stages</th>
+                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Progress</th>
                 </tr>
               </thead>
               <tbody>
@@ -464,14 +360,57 @@ export default function App() {
                   const key = getJobKey(r);
                   const overall = getRowOverallPct(key);
                   const isOpen = openKey === key && !!openStage;
+
+                  const client = (r["Client"] || r["Job"] || "").trim();
+                  const link = (r["Link to Folder"] || r["Link"] || "").trim();
+                  const days =
+                    (r["Days Until Delivery"] || r["Days until Delivery"] || r["Days"] || "").trim();
+
                   return (
                     <React.Fragment key={i}>
                       <tr className="odd:bg-white even:bg-gray-50 border-b-2">
-                        {visibleHeaders.map((h) => (
-                          <td key={h} className="px-3 py-3 border-b whitespace-nowrap">
-                            {renderCell(h, r)}
-                          </td>
-                        ))}
+                        <td className="px-3 py-3 border-b whitespace-nowrap">{client || "—"}</td>
+                        <td className="px-3 py-3 border-b whitespace-nowrap">
+                          {link ? (
+                            <a className="text-blue-600 hover:underline" href={link} target="_blank" rel="noreferrer">
+                              Open
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="px-3 py-3 border-b whitespace-nowrap">{days || "—"}</td>
+
+                        <td className="px-3 py-3 border-b whitespace-nowrap">
+                          <div className="flex flex-wrap gap-2">
+                            {STAGE_COLUMNS.map((stage) => {
+                              const st = getStageProgress(key, stage);
+                              const cls =
+                                st.state === "complete"
+                                  ? "bg-green-50 border-green-600"
+                                  : st.state === "partial"
+                                  ? "bg-orange-50 border-orange-500"
+                                  : "bg-white border-gray-300";
+                              const dot =
+                                st.state === "complete"
+                                  ? "bg-green-500 border-green-600"
+                                  : st.state === "partial"
+                                  ? "bg-orange-400 border-orange-500"
+                                  : "bg-white border-gray-300";
+                              return (
+                                <button
+                                  key={stage}
+                                  onClick={() => openChecklist(r, stage)}
+                                  className={`px-2 py-1 rounded-lg border flex items-center gap-2 ${cls}`}
+                                >
+                                  <span className={`inline-block w-3 h-3 rounded border ${dot}`} />
+                                  <span className="text-xs font-medium">{stage}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </td>
+
                         <td className="px-3 py-3 border-b min-w-[220px]">
                           <div className="w-48 h-3 bg-gray-100 rounded-full overflow-hidden">
                             <div className="h-3 bg-green-500" style={{ width: overall + "%" }} />
@@ -482,9 +421,11 @@ export default function App() {
 
                       {isOpen && (
                         <tr>
-                          <td colSpan={visibleHeaders.length + 1} className="bg-gray-50">
+                          <td colSpan={5} className="bg-gray-50">
                             <div className="p-3 grid gap-3">
-                              <div className="text-sm font-medium">{(r["Client"] || r["Job"] || "Job") + " — " + openStage}</div>
+                              <div className="text-sm font-medium">
+                                {client || "Job"} — {openStage}
+                              </div>
                               <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                 {(SECTION_DEFS[openStage] || []).map((name) => {
                                   const sub = getStageProgress(key, openStage).subs[name];
@@ -547,8 +488,8 @@ export default function App() {
         </section>
 
         <footer className="text-xs text-gray-500 text-center">
-          Spreadsheet (Tracker) is the source of truth. Sub-task updates write to <b>WorkshopJobState</b> and are pulled back every
-          15s. Stage snapshots write back into the Tracker columns.
+          Sheet is the source of truth. Sub-task updates write to the <b>WorkshopJobState</b> tab and are pulled back every
+          10–15s.
         </footer>
       </div>
     </div>
