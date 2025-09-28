@@ -14,11 +14,13 @@ function toCsvUrl(input: string) {
       const m = url.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
       const id = m ? m[1] : null;
       const gid = url.searchParams.get("gid") || "0";
-      if (id) return `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${gid}`;
+      // Use export endpoint (more reliable & proper CORS headers)
+      if (id) return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`;
     }
-  } catch (_) {}
+  } catch {}
   return input;
 }
+
 
 function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
@@ -137,23 +139,48 @@ export default function App() {
   const colMap = { title: "Job", status: "Status", start: "Start", end: "End", assignee: "Assigned To", id: "ID" };
 
   /* -------- load CSV -------- */
-  async function loadSheet() {
-    try {
-      setError("");
-      setLoading(true);
-      const url = toCsvUrl(sheetUrl);
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Fetch failed: " + res.status);
-      const text = await res.text();
-      const parsed = parseCsv(text);
-      setHeaders(parsed.headers);
-      setRows(parsed.rows);
-    } catch (e: any) {
-      setError(e.message || "Failed to load");
-    } finally {
-      setLoading(false);
-    }
+  async function fetchWithTimeout(url: string, ms = 12000): Promise<Response> {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(id);
   }
+}
+
+async function loadSheet() {
+  try {
+    setError("");
+    setLoading(true);
+
+    const url = toCsvUrl(sheetUrl);
+    console.log("[CSV] fetching:", url);
+
+    const res = await fetchWithTimeout(url, 12000);
+    if (!res.ok) throw new Error("CSV fetch failed: " + res.status);
+
+    const text = await res.text();
+    // quick sanity check so we don’t parse an HTML error page
+    if (text.startsWith("<!DOCTYPE html") || text.toLowerCase().includes("<html")) {
+      throw new Error("Got HTML instead of CSV (likely permissions). Make the sheet 'Anyone with link: Viewer'.");
+    }
+
+    const parsed = parseCsv(text);
+    console.log("[CSV] parsed:", parsed.headers, parsed.rows.length, "rows");
+
+    setHeaders(parsed.headers);
+    setRows(parsed.rows);
+  } catch (e: any) {
+    console.error("[CSV] error:", e);
+    setError(e?.message || "Failed to load sheet");
+    setHeaders([]);
+    setRows([]);
+  } finally {
+    setLoading(false);      // <- guarantees the spinner/sync state stops
+  }
+}
+
   React.useEffect(() => {
     loadSheet();
   }, []);
