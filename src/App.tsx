@@ -400,6 +400,95 @@ export default function App() {
                         </td>
                       </tr>
 
-                      {isOpen && (
+                                            {isOpen && (
                         <tr>
-                          <td colSpan={headers.length + 1} class
+                          <td colSpan={headers.length + 1} className="bg-gray-50">
+                            <div className="p-3 grid gap-3">
+                              <div className="text-sm font-medium">
+                                {r[colMap.title] || "Job"} — {openStage}
+                              </div>
+                              <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+                                {(SECTION_DEFS[openStage] || []).map((name) => {
+                                  const sub = getStageProgress(key, openStage).subs[name];
+                                  const status = sub?.status || "none";
+                                  const notes = sub?.notes || "";
+                                  return (
+                                    <div key={name} className="bg-white border rounded-lg p-3 grid gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <select
+                                          className="border rounded px-2 py-1 text-sm"
+                                          value={status}
+                                          onChange={(e) =>
+                                            setSubStatus(r, openStage, name, e.target.value as any)
+                                          }
+                                        >
+                                          <option value="none">Not started</option>
+                                          <option value="progress">In progress</option>
+                                          <option value="done">Done</option>
+                                        </select>
+                                        <span className="text-sm">{name}</span>
+                                      </div>
+                                      {status === "progress" && (
+                                        <input
+                                          className="border rounded px-2 py-1 text-sm w-full"
+                                          placeholder="Notes…"
+                                          value={notes}
+                                          onChange={(e) =>
+                                            setSubNotes(r, openStage, name, e.target.value)
+                                          }
+                                        />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() =>
+                                    (SECTION_DEFS[openStage] || []).forEach((n) =>
+                                      setSubStatus(r, openStage, n, "done")
+                                    )
+                                  }
+                                  className="px-3 py-1 rounded-lg border text-xs"
+                                >
+                                  Mark All Done
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    (SECTION_DEFS[openStage] || []).forEach((n) =>
+                                      setSubStatus(r, openStage, n, "none")
+                                    )
+                                  }
+                                  className="px-3 py-1 rounded-lg border text-xs"
+                                >
+                                  Clear All
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setOpenKey("");
+                                    setOpenStage("");
+                                  }}
+                                  className="ml-auto px-3 py-1 rounded-lg border text-xs"
+                                >
+                                  Close
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <footer className="text-xs text-gray-500 text-center">
+          Weights, mandatory stages, and Google Apps Script persistence can be added next.
+        </footer>
+      </div>
+    </div>
+  );
+}
