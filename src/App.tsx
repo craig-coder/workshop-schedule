@@ -147,7 +147,11 @@ export default function App() {
   // --- server sync helpers
   async function pullJob(jobKey: string) {
     try {
-      const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: "GET" });
+      const res = await fetch(
+  `${SYNC_URL}?job=${encodeURIComponent(jobKey)}&_=${Date.now()}`,
+  { method: "GET", cache: "no-store" }
+);
+
       if (!res.ok) return null;
       const j = await res.json();
       if (Array.isArray(j?.items)) return { items: j.items };
