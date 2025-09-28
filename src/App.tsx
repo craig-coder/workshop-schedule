@@ -212,25 +212,28 @@ export default function App() {
     return () => { cancelled = true; window.clearInterval(id); };
   }, [openKey]);
 
-  // Global sync every 15s across all jobs (with logging)
-  React.useEffect(() => {
-    if (!rows.length) return;
-    let cancelled = false;
+React.useEffect(() => {
+  if (!rows.length) return;
+  let cancelled = false;
 
-    async function refreshAll() {
-      console.log("🔄 Global sync tick");
-      for (const r of rows) {
-        const jobKey = getJobKey(r);
-        const remote = await pullJob(jobKey);
-        if (!cancelled && remote && Array.isArray(remote.items)) {
-          mergeRemoteIntoLocal(jobKey, remote.items);
-        }
+  async function refreshAll() {
+    console.log("🔄 Global sync tick — refreshing all jobs");
+    for (const r of rows) {
+      const jobKey = getJobKey(r);
+      const remote = await pullJob(jobKey);
+      console.log("   ➜ fetched", jobKey, (remote?.items?.length || 0), "items");
+      if (!cancelled && remote && Array.isArray(remote.items)) {
+        mergeRemoteIntoLocal(jobKey, remote.items);
       }
     }
+  }
 
-    const id = window.setInterval(refreshAll, 15000);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [rows]);
+  // run immediately once, then every 15s
+  refreshAll();
+  const id = window.setInterval(refreshAll, 15000);
+  return () => { cancelled = true; window.clearInterval(id); };
+}, [rows]);
+
 
   function setSubStatus(r: Record<string, string>, stage: string, name: string, status: "none" | "progress" | "done") {
     const job = getJobKey(r);
