@@ -1,7 +1,7 @@
 // Serverless proxy to Google Apps Script to avoid CORS issues.
 export default async function handler(req, res) {
   // Use your working Apps Script URL:
-  const API = "https://script.google.com/macros/s/AKfycbxeXiLyEF3BCRZaxYkpwsaR5p6_tKS7fje83c8ZQ2GLbgRpXYcJdW22hVNIUvZKKkMS/exec";
+  const API = "https://script.google.com/macros/s/AKfycbyN8qR8nXfweKin6fZmsh6Ykka9fmikAg6wI4sH26k4XFck6TZjn2IiKfqyCKDx7BAc7g/exec";
 
   try {
     let url = API;
