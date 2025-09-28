@@ -53,9 +53,11 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
 
 /* ---------------- App config: stages + subtasks ---------------- */
 const STAGE_COLUMNS = [
-  "Draw","Order","CNC","Edging","Joinery","Prime","Top Coat","Wrap & Pack"
+  "Draw","Order","CNC","Edging","Joinery","Prime","Top Coat","Wrap & Pack",
+  "Remedials","Job Complete"
 ] as const;
 
+// tweak these however you like later
 const SECTION_DEFS: Record<string, string[]> = {
   Draw:        ["Cabinets Drawn","Fronts Drawn"],
   Order:       ["LDL Order","Decormax Order","Tikkurila Order","Fitters Kit Packed & Consumables Checked"],
@@ -65,7 +67,8 @@ const SECTION_DEFS: Record<string, string[]> = {
   Prime:       ["Prep","Side 1","Side 2"],
   "Top Coat":  ["Prep","Side 1.1","Side 2.1","Prep","Side 1.2","Side 2.2"],
   "Wrap & Pack": ["Cabinets Wrapped","Rails Cut","Doors Wrapped","Fitters Kit Checked"],
-  // You can add "Install","Complete" later if you like
+  Remedials:   ["Snags Found","Snags Fixed","Revisit Booked"],
+  "Job Complete": ["Client Sign-off","Photos Taken","Invoice Sent"],
 };
 
 /* ---------------- Local storage (optional) ---------------- */
@@ -244,7 +247,10 @@ export default function App() {
       st.state === "partial"  ? "bg-orange-400 border-orange-500" :
                                 "bg-white border-gray-300";
     return (
-      <button onClick={onClick} className={`px-2 py-1 rounded-lg border flex items-center gap-2 ${cls}`}>
+      <button
+        onClick={onClick}
+        className={`px-3 py-1.5 rounded-lg border flex items-center gap-2 ${cls}`}
+      >
         <span className={`inline-block w-4 h-4 rounded border ${dot}`} />
         <span className="text-xs font-medium">{stage}</span>
       </button>
@@ -254,7 +260,7 @@ export default function App() {
   function renderStagesCell(r: Record<string,string>) {
     const jobKey = getJobKey(r);
     return (
-      <div className="flex flex-wrap gap-2">
+      <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {STAGE_COLUMNS.map(s => (
           <StageButton key={s} jobKey={jobKey} stage={s} onClick={() => openChecklist(r, s)} />
         ))}
@@ -319,13 +325,13 @@ export default function App() {
 
         <section className="bg-white rounded-2xl shadow p-4">
           <div className="overflow-auto border rounded-xl">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-sm table-auto">
               <thead className="bg-gray-100">
                 <tr>
                   <th className="text-left px-3 py-3 border-b whitespace-nowrap">Job</th>
                   <th className="text-left px-3 py-3 border-b whitespace-nowrap">Client</th>
                   <th className="text-left px-3 py-3 border-b whitespace-nowrap">Link to Folder</th>
-                  <th className="text-left px-3 py-3 border-b whitespace-nowrap">Stages</th>
+                  <th className="text-left px-3 py-3 border-b whitespace-nowrap" style={{ minWidth: 560 }}>Stages</th>
                   <th className="text-left px-3 py-3 border-b whitespace-nowrap">Progress</th>
                 </tr>
               </thead>
