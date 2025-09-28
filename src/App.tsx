@@ -103,14 +103,27 @@ export default function App() {
   }
   React.useEffect(() => { loadSheet(); }, []);
 
-  function getJobKey(r: Record<string, string>) {
-    const client = (r["Client"] || r["Customer"] || "").trim();
-    const job    = (r["Job"] || r["Project"] || r["Job Name"] || r["Order"] || "").trim();
-    const id     = (r["ID"] || r["Job No"] || r["Order No"] || "").trim();
-    if (id) return id;
-    if (client || job) return [client, job].filter(Boolean).join(" — ");
-    return JSON.stringify({ Client: client || r["Client"], Job: job || r["Job"] });
-  }
+function getJobKey(r: Record<string, string>) {
+  // Prefer a stable explicit ID if your sheet has one.
+  const id =
+    (r["ID"] || r["Job ID"] || r["Order No"] || r["Job No"] || "").trim();
+
+  // Fall back to the Client/Customer name only (simple and consistent).
+  const client = (r["Client"] || r["Customer"] || "").trim();
+
+  // Final fallback: try a single text-y title field.
+  const title =
+    (r["Project"] || r["Job Name"] || r["Order"] || r["Title"] || "").trim();
+
+  // Choose in order of reliability.
+  if (id) return id;
+  if (client) return client;
+  if (title) return title;
+
+  // Very last resort: stringify a couple of cells (but keep it stable).
+  return JSON.stringify({ Client: r["Client"] || "", Title: title });
+}
+
 
   function getStageProgress(jobKey: string, stage: string) {
     const s = progress[jobKey]?.[stage] ?? { subs: {} as Record<string, any> };
