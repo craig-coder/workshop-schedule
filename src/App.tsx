@@ -6,7 +6,7 @@ const SYNC_URL = "/api/sheets";
 const DEFAULT_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091";
 
-/* ---------------- CSV LOADER (unchanged) ---------------- */
+/* ---------------- CSV LOADER ---------------- */
 function toCsvUrl(input: string) {
   try {
     const url = new URL(input.trim());
@@ -86,7 +86,7 @@ function getJobKey(r: Record<string, string>) {
   const id = cleanText(r["ID"] || r["Job No"] || r["Order No"]);
   const client = cleanText(r["Client"] || r["Customer"]);
   const title  = cleanText(r["Title"] || r["Job Name"] || r["Project"]);
-  // NOTE: intentionally not using r["Job"] (it sometimes holds TRUE/FALSE in your sheet)
+  // NOTE: intentionally not using r["Job"] (it can be boolean-ish in your sheet)
 
   if (id) return String(id);
   if (client && title) return `${client} — ${title}`;
@@ -95,7 +95,7 @@ function getJobKey(r: Record<string, string>) {
   return JSON.stringify({ Client: client, Title: title });
 }
 
-/* ---------------- API: pull/push via proxy ---------------- */
+/* ---------------- API via proxy ---------------- */
 async function pullJob(jobKey: string) {
   try {
     const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: "GET" });
@@ -110,9 +110,9 @@ async function pullJob(jobKey: string) {
 async function pushUpdate(payload: any) {
   try {
     await fetch(SYNC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
   } catch { /* ignore */ }
 }
@@ -164,7 +164,8 @@ export default function App() {
     }
     const total = names.length;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    const state: "none" | "partial" | "complete" = (done === total && total > 0) ? "complete" : (started > 0 ? "partial" : "none");
+    const state: "none" | "partial" | "complete" =
+      (done === total && total > 0) ? "complete" : (started > 0 ? "partial" : "none");
     return { subs: map, pct, state };
   }
 
@@ -202,7 +203,6 @@ export default function App() {
   }
 
   /* ---------- MERGE MODES ---------- */
-  // OVERWRITE: used when opening a job or pressing Sync Now
   function overwriteFromServer(jobKey: string, items: any[]) {
     setProgress((prev: any) => {
       if (!items || items.length === 0) {
@@ -222,7 +222,6 @@ export default function App() {
     });
   }
 
-  // SOFT MERGE: used by background poll – do NOT clear on empty
   function mergeIfAny(jobKey: string, items: any[]) {
     if (!items || items.length === 0) return;
     setProgress((prev: any) => {
@@ -245,7 +244,6 @@ export default function App() {
     const jobKey = getJobKey(r);
     setOpenKey(jobKey);
     setOpenStage(stage);
-
     const remote = await pullJob(jobKey);
     if (remote && Array.isArray(remote.items)) overwriteFromServer(jobKey, remote.items);
   }
@@ -265,49 +263,35 @@ export default function App() {
     return () => { cancelled = true; window.clearInterval(id); };
   }, [openKey]);
 
-// ---------- Global poll every 15s (authoritative if server has data) ----------
-React.useEffect(() => {
-  if (!rows.length) return;
-  let cancelled = false;
+  /* ---------- Global poll every 15s (authoritative if server has data) ---------- */
+  React.useEffect(() => {
+    if (!rows.length) return;
+    let cancelled = false;
 
-  async function refreshAll() {
-    console.log("Global sync tick — refreshing all jobs");
-    for (const r of rows) {
-      const jobKey = getJobKey(r);
-      if (!jobKey) continue;
-      const remote = await pullJob(jobKey);
-      if (cancelled) return;
+    async function refreshAll() {
+      console.log("Global sync tick — refreshing all jobs");
+      for (const r of rows) {
+        const jobKey = getJobKey(r);
+        if (!jobKey) continue;
+        const remote = await pullJob(jobKey);
+        if (cancelled) return;
 
-      // If the server has any items for this job, make the UI match the server exactly.
-      if (remote && Array.isArray(remote.items) && remote.items.length > 0) {
-        console.log(`  → fetched ${jobKey} — ${remote.items.length} items (OVERWRITE)`);
-        overwriteFromServer(jobKey, remote.items);
-      } else {
-        // No items on server → leave local state as-is (don't clear)
-        console.log(`  → fetched ${jobKey} — 0 items (skip clear)`);
+        if (remote && Array.isArray(remote.items) && remote.items.length > 0) {
+          console.log(`  → fetched ${jobKey} — ${remote.items.length} items (OVERWRITE)`);
+          overwriteFromServer(jobKey, remote.items);
+        } else {
+          console.log(`  → fetched ${jobKey} — 0 items (skip clear)`);
+        }
       }
     }
-  }
 
-  // kick one run soon after mount, then every 15s
-  const first = setTimeout(refreshAll, 500);
-  const id = window.setInterval(refreshAll, 15000);
-
-  return () => {
-    clearTimeout(first);
-    clearInterval(id);
-    cancelled = true;
-  };
-}, [rows]);
-
-
+    const first = window.setTimeout(refreshAll, 500);
     const id = window.setInterval(refreshAll, 15000);
-    return () => { cancelled = true; window.clearInterval(id); };
+    return () => { window.clearTimeout(first); window.clearInterval(id); cancelled = true; };
   }, [rows]);
 
-  /* ---------- Optional: Sync now (overwrite all) ---------- */
+  /* ---------- Sync now (manual overwrite all) ---------- */
   async function syncNow() {
-    // ensure the grid is loaded
     if (!rows.length) await loadSheet();
     for (const r of rows) {
       const jobKey = getJobKey(r);
@@ -320,8 +304,9 @@ React.useEffect(() => {
   /* ---------- UI ---------- */
   function BoolCell({ on }: { on: boolean }) {
     return (
-      <span className={on ? "inline-block w-4 h-4 rounded border bg-green-500 border-green-600"
-                          : "inline-block w-4 h-4 rounded border bg-white border-gray-300"} />
+      <span className={on
+        ? "inline-block w-4 h-4 rounded border bg-green-500 border-green-600"
+        : "inline-block w-4 h-4 rounded border bg-white border-gray-300"} />
     );
   }
 
@@ -368,7 +353,8 @@ React.useEffect(() => {
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <input className="border rounded-lg px-3 py-2 w-[520px]" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
+            <input className="border rounded-lg px-3 py-2 w-[520px]" value={sheetUrl}
+                   onChange={(e) => setSheetUrl(e.target.value)} />
             <button onClick={loadSheet} disabled={loading} className="px-3 py-2 rounded-lg bg-black text-white">
               {loading ? "Loading…" : "Refresh"}
             </button>
