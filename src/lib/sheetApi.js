@@ -1,7 +1,7 @@
-
+// Hardcode your Apps Script Web App URL here (keep the quotes)
 const HARDCODED_API = "https://script.google.com/macros/s/AKfycbyXB-Tg0mdAlCZ6B3OsezpI9yVSreEgK0Uou58CVLhBoBdKyJjJaekPAbjRLaFfXNGZxA/exec";
 
-// Use either hardcoded URL or environment variable
+// Use either hardcoded URL or environment variables (Vite)
 const API =
   HARDCODED_API ||
   (import.meta?.env?.VITE_SHEET_API) ||
@@ -10,9 +10,7 @@ const API =
 
 function assertApi() {
   if (!API) {
-    throw new Error(
-      "Missing API – set HARDCODED_API or VITE_SHEET_API (or VITE_SYNC_URL) in Vercel"
-    );
+    throw new Error("Missing API – set HARDCODED_API or VITE_SHEET_API (or VITE_SYNC_URL) in Vercel");
   }
 }
 
@@ -28,3 +26,8 @@ export async function setState(key, value, by = "VercelApp") {
   const res = await fetch(API, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ route: "state:set", key, value, by }),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json();
+}
