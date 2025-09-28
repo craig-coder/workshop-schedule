@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { getState, setState } from "../lib/sheetApi";
-
+// TEMP DEBUG — remove later
+console.log("VITE_SHEET_API:", import.meta?.env?.VITE_SHEET_API);
+console.log("VITE_SYNC_URL:", import.meta?.env?.VITE_SYNC_URL);
 export default function HeartbeatTest() {
   const [log, setLog] = useState([]);
 
