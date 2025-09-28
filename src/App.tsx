@@ -182,8 +182,6 @@ function getJobKey(r: Record<string, string>) {
   return JSON.stringify({ Client: client, Title: title });
 }
 
-  }
-
   function getStageProgress(jobKey: string, stage: string) {
     const s = progress[jobKey]?.[stage] ?? { subs: {} as Record<string, any> };
     const names = SECTION_DEFS[stage] || [];
