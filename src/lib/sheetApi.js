@@ -1,5 +1,5 @@
 // Hardcode your Apps Script Web App URL here (keep the quotes)
-const HARDCODED_API = "https://script.google.com/macros/s/AKfycbyXB-Tg0mdAlCZ6B3OsezpI9yVSreEgK0Uou58CVLhBoBdKyJjJaekPAbjRLaFfXNGZxA/exec";
+const HARDCODED_API = "https://script.google.com/macros/s/AKfycbxeXiLyEF3BCRZaxYkpwsaR5p6_tKS7fje83c8ZQ2GLbgRpXYcJdW22hVNIUvZKKkMS/exec";
 
 // Use either hardcoded URL or environment variables (Vite)
 const API =
