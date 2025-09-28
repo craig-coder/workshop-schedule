@@ -29,10 +29,18 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === '"') {
-        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
-        else { inQ = !inQ; }
-      } else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
-      else { cur += ch; }
+        if (inQ && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQ = !inQ;
+        }
+      } else if (ch === "," && !inQ) {
+        out.push(cur);
+        cur = "";
+      } else {
+        cur += ch;
+      }
     }
     out.push(cur);
     return out;
@@ -66,9 +74,15 @@ const STAGE_COLUMNS = ["Draw", "Order", "CNC", "Edging", "Joinery", "Prime", "To
 function useLocalProgress() {
   const key = "wff_progress_multi_stage_v3";
   const [state, setState] = React.useState<Record<string, any>>(() => {
-    try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; }
+    try {
+      return JSON.parse(localStorage.getItem(key) || "{}");
+    } catch {
+      return {};
+    }
   });
-  React.useEffect(() => { localStorage.setItem(key, JSON.stringify(state)); }, [state]);
+  React.useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(state));
+  }, [state]);
   return [state, setState] as const;
 }
 
@@ -87,7 +101,8 @@ export default function App() {
 
   async function loadSheet() {
     try {
-      setError(""); setLoading(true);
+      setError("");
+      setLoading(true);
       const url = toCsvUrl(sheetUrl);
       const res = await fetch(url);
       if (!res.ok) throw new Error("Fetch failed: " + res.status);
@@ -95,15 +110,20 @@ export default function App() {
       const parsed = parseCsv(text);
       setHeaders(parsed.headers);
       setRows(parsed.rows);
-    } catch (e: any) { setError(e.message || "Failed to load"); }
-    finally { setLoading(false); }
+    } catch (e: any) {
+      setError(e.message || "Failed to load");
+    } finally {
+      setLoading(false);
+    }
   }
-  React.useEffect(() => { loadSheet(); }, []);
+  React.useEffect(() => {
+    loadSheet();
+  }, []);
 
   function getJobKey(r: Record<string, string>) {
     const client = (r["Client"] || r["Customer"] || "").trim();
-    const job    = (r["Job"] || r["Project"] || r["Job Name"] || r["Order"] || "").trim();
-    const id     = (r["ID"] || r["Job No"] || r["Order No"] || "").trim();
+    const job = (r["Job"] || r["Project"] || r["Job Name"] || r["Order"] || "").trim();
+    const id = (r["ID"] || r["Job No"] || r["Order No"] || "").trim();
     if (id) return id;
     if (client || job) return [client, job].filter(Boolean).join(" — ");
     return JSON.stringify({ Client: client || r["Client"], Job: job || r["Job"] });
@@ -113,26 +133,31 @@ export default function App() {
     const s = progress[jobKey]?.[stage] ?? { subs: {} as Record<string, any> };
     const names = SECTION_DEFS[stage] || [];
     const map: Record<string, { status: "none" | "progress" | "done"; notes?: string }> = {};
-    let done = 0, started = 0;
+    let done = 0,
+      started = 0;
     for (const n of names) {
       const raw = s.subs?.[n];
       let status: "none" | "progress" | "done" = "none";
       let notes: string | undefined;
-      if (raw && typeof raw === "object") { status = (raw.status as any) || "none"; notes = raw.notes; }
-      else if (raw === true) { status = "done"; }
+      if (raw && typeof raw === "object") {
+        status = (raw.status as any) || "none";
+        notes = raw.notes;
+      } else if (raw === true) {
+        status = "done";
+      }
       map[n] = { status, notes };
       if (status === "done") done++;
       if (status === "progress" || status === "done") started++;
     }
     const total = names.length;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    const state: "none" | "partial" | "complete" =
-      (done === total && total > 0) ? "complete" : (started > 0 ? "partial" : "none");
+    const state: "none" | "partial" | "complete" = done === total && total > 0 ? "complete" : started > 0 ? "partial" : "none";
     return { subs: map, pct, state };
   }
 
   function getRowOverallPct(jobKey: string) {
-    let total = 0, count = 0;
+    let total = 0,
+      count = 0;
     for (const stage of STAGE_COLUMNS) {
       if ((SECTION_DEFS[stage] || []).length === 0) continue;
       total += getStageProgress(jobKey, stage).pct;
@@ -140,70 +165,6 @@ export default function App() {
     }
     return count > 0 ? Math.round(total / count) : 0;
   }
-
-  // --- server sync helpers
-  async function pullJob(jobKey: string) {
-    try {
-      const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: "GET" });
-      if (!res.ok) return null;
-      const j = await res.json();
-      if (Array.isArray(j?.items)) return { items: j.items };
-      if (Array.isArray(j?.data))  return { items: j.data };
-      return { items: [] };
-    } catch { return null; }
-  }
-
-  function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
-    setProgress((prev: any) => {
-      const nextJob = { ...(prev[jobKey] || {}) };
-      items.forEach((it: any) => {
-        const st = nextJob[it.stage] || { subs: {} };
-        st.subs[it.subtask] = { status: it.status || "none", notes: it.notes || "" };
-        nextJob[it.stage] = st;
-      });
-      return { ...prev, [jobKey]: nextJob };
-    });
-  }
-
-  async function pushUpdate(payload: any) {
-    try {
-      await fetch(SYNC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } catch { /* keep UI responsive */ }
-  }
-
-  // open a checklist: show panel and pull latest from server once
-  async function openChecklist(r: Record<string, string>, stage: string) {
-    if (!SECTION_DEFS[stage]) { alert("No subtasks configured for " + stage); return; }
-    const jobKey = getJobKey(r);
-    setOpenKey(jobKey);
-    setOpenStage(stage);
-
-    const remote = await pullJob(jobKey);
-    if (remote && Array.isArray(remote.items)) {
-      mergeRemoteIntoLocal(jobKey, remote.items);
-    }
-  }
-
-  // Auto-refresh the open checklist every 10s across devices
-  React.useEffect(() => {
-    if (!openKey) return;
-    let cancelled = false;
-
-    async function refresh() {
-      const remote = await pullJob(openKey);
-      if (!cancelled && remote && Array.isArray(remote.items)) {
-        mergeRemoteIntoLocal(openKey, remote.items);
-      }
-    }
-
-    refresh(); // initial
-    const id = window.setInterval(refresh, 10000);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [openKey]);
 
   function setSubStatus(r: Record<string, string>, stage: string, name: string, status: "none" | "progress" | "done") {
     const job = getJobKey(r);
@@ -227,12 +188,108 @@ export default function App() {
     pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status: "progress", notes });
   }
 
+  async function pullJob(jobKey: string) {
+    try {
+      const res = await fetch(`${SYNC_URL}?job=${encodeURIComponent(jobKey)}`, { method: "GET" });
+      if (!res.ok) return null;
+      const j = await res.json();
+      if (Array.isArray(j?.items)) return { items: j.items };
+      if (Array.isArray(j?.data)) return { items: j.data };
+      return { items: [] };
+    } catch {
+      return null;
+    }
+  }
+
+  function mergeRemoteIntoLocal(jobKey: string, items: any[]) {
+    setProgress((prev: any) => {
+      const nextJob = { ...(prev[jobKey] || {}) };
+      items.forEach((it: any) => {
+        const st = nextJob[it.stage] || { subs: {} };
+        st.subs[it.subtask] = { status: it.status || "none", notes: it.notes || "" };
+        nextJob[it.stage] = st;
+      });
+      return { ...prev, [jobKey]: nextJob };
+    });
+  }
+
+  async function pushUpdate(payload: any) {
+    try {
+      await fetch(SYNC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // ignore network errors so UI stays responsive
+    }
+  }
+
+  async function openChecklist(r: Record<string, string>, stage: string) {
+    if (!SECTION_DEFS[stage]) {
+      alert("No subtasks configured for " + stage);
+      return;
+    }
+    const jobKey = getJobKey(r);
+    setOpenKey(jobKey);
+    setOpenStage(stage);
+    const remote = await pullJob(jobKey);
+    if (remote && Array.isArray(remote.items)) {
+      mergeRemoteIntoLocal(jobKey, remote.items);
+    }
+  }
+
+  // Poll the currently open checklist every 10s
+  React.useEffect(() => {
+    if (!openKey) return;
+    let cancelled = false;
+
+    async function refresh() {
+      const remote = await pullJob(openKey);
+      if (!cancelled && remote && Array.isArray(remote.items)) {
+        mergeRemoteIntoLocal(openKey, remote.items);
+      }
+    }
+
+    refresh();
+    const id = window.setInterval(refresh, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [openKey]);
+
+  // Global sync every 15s across all jobs
+  React.useEffect(() => {
+    if (!rows.length) return;
+    let cancelled = false;
+
+    async function refreshAll() {
+      for (const r of rows) {
+        const jobKey = getJobKey(r);
+        const remote = await pullJob(jobKey);
+        if (!cancelled && remote && Array.isArray(remote.items)) {
+          mergeRemoteIntoLocal(jobKey, remote.items);
+        }
+      }
+    }
+
+    const id = window.setInterval(refreshAll, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [rows]);
+
   function BoolCell({ on }: { on: boolean }) {
     return (
-      <span className={
-        on ? "inline-block w-4 h-4 rounded border bg-green-500 border-green-600"
-           : "inline-block w-4 h-4 rounded border bg-white border-gray-300"
-      }/>
+      <span
+        className={
+          on
+            ? "inline-block w-4 h-4 rounded border bg-green-500 border-green-600"
+            : "inline-block w-4 h-4 rounded border bg-white border-gray-300"
+        }
+      />
     );
   }
 
@@ -241,13 +298,17 @@ export default function App() {
       const key = getJobKey(r);
       const st = getStageProgress(key, h);
       const cls =
-        st.state === "complete" ? "bg-green-50 border-green-600"
-        : st.state === "partial" ? "bg-orange-50 border-orange-500"
-        : "bg-white border-gray-300";
+        st.state === "complete"
+          ? "bg-green-50 border-green-600"
+          : st.state === "partial"
+          ? "bg-orange-50 border-orange-500"
+          : "bg-white border-gray-300";
       const box =
-        st.state === "complete" ? "bg-green-500 border-green-600"
-        : st.state === "partial" ? "bg-orange-400 border-orange-500"
-        : "bg-white border-gray-300";
+        st.state === "complete"
+          ? "bg-green-500 border-green-600"
+          : st.state === "partial"
+          ? "bg-orange-400 border-orange-500"
+          : "bg-white border-gray-300";
       return (
         <button onClick={() => openChecklist(r, h)} className={`px-2 py-1 rounded-lg border flex items-center gap-2 ${cls}`}>
           <span className={`inline-block w-4 h-4 rounded border ${box}`} />
@@ -258,8 +319,8 @@ export default function App() {
     const v = r[h];
     if (v === undefined || v === null) return null;
     const s = String(v).trim().toLowerCase();
-    if (["true","yes","1","✓"].includes(s)) return <BoolCell on={true} />;
-    if (["false","no","0","✗"].includes(s)) return <BoolCell on={false} />;
+    if (["true", "yes", "1", "✓"].includes(s)) return <BoolCell on={true} />;
+    if (["false", "no", "0", "✗"].includes(s)) return <BoolCell on={false} />;
     return v;
   }
 
@@ -276,12 +337,16 @@ export default function App() {
           <div>
             <h1 className="text-2xl font-semibold">Workshop Schedule — Tri-state checklists</h1>
             <p className="text-sm text-gray-600">
-              Click any stage cell (Draw, Order, CNC, Edging, Joinery, Prime, Top Coat, Wrap & Pack) to open sub-tasks.
-              Orange = in progress, Green = complete.
+              Click any stage cell (Draw, Order, CNC, Edging, Joinery, Prime, Top Coat, Wrap & Pack) to open sub-tasks. Orange = in
+              progress, Green = complete.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <input className="border rounded-lg px-3 py-2 w-[520px]" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
+            <input
+              className="border rounded-lg px-3 py-2 w-[520px]"
+              value={sheetUrl}
+              onChange={(e) => setSheetUrl(e.target.value)}
+            />
             <button onClick={loadSheet} disabled={loading} className="px-3 py-2 rounded-lg bg-black text-white">
               {loading ? "Loading…" : "Refresh"}
             </button>
@@ -307,7 +372,9 @@ export default function App() {
               <thead className="bg-gray-100">
                 <tr>
                   {headers.map((h) => (
-                    <th key={h} className="text-left px-3 py-3 border-b whitespace-nowrap">{h}</th>
+                    <th key={h} className="text-left px-3 py-3 border-b whitespace-nowrap">
+                      {h}
+                    </th>
                   ))}
                   <th className="text-left px-3 py-3 border-b">Progress</th>
                 </tr>
@@ -321,7 +388,9 @@ export default function App() {
                     <React.Fragment key={i}>
                       <tr className="odd:bg-white even:bg-gray-50 border-b-2">
                         {headers.map((h) => (
-                          <td key={h} className="px-3 py-3 border-b whitespace-nowrap">{renderCell(h, r)}</td>
+                          <td key={h} className="px-3 py-3 border-b whitespace-nowrap">
+                            {renderCell(h, r)}
+                          </td>
                         ))}
                         <td className="px-3 py-3 border-b min-w-[220px]">
                           <div className="w-48 h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -333,73 +402,4 @@ export default function App() {
 
                       {isOpen && (
                         <tr>
-                          <td colSpan={headers.length + 1} className="bg-gray-50">
-                            <div className="p-3 grid gap-3">
-                              <div className="text-sm font-medium">{r[colMap.title] || "Job"} — {openStage}</div>
-                              <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-                                {(SECTION_DEFS[openStage] || []).map((name) => {
-                                  const sub = getStageProgress(key, openStage).subs[name];
-                                  const status = sub?.status || "none";
-                                  const notes = sub?.notes || "";
-                                  return (
-                                    <div key={name} className="bg-white border rounded-lg p-3 grid gap-2">
-                                      <div className="flex items-center gap-2">
-                                        <select
-                                          className="border rounded px-2 py-1 text-sm"
-                                          value={status}
-                                          onChange={(e) => setSubStatus(r, openStage, name, e.target.value as any)}
-                                        >
-                                          <option value="none">Not started</option>
-                                          <option value="progress">In progress</option>
-                                          <option value="done">Done</option>
-                                        </select>
-                                        <span className="text-sm">{name}</span>
-                                      </div>
-                                      {status === "progress" && (
-                                        <input
-                                          className="border rounded px-2 py-1 text-sm w-full"
-                                          placeholder="Notes…"
-                                          value={notes}
-                                          onChange={(e) => setSubNotes(r, openStage, name, e.target.value)}
-                                        />
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => (SECTION_DEFS[openStage] || []).forEach((n) => setSubStatus(r, openStage, n, "done"))}
-                                  className="px-3 py-1 rounded-lg border text-xs"
-                                >
-                                  Mark All Done
-                                </button>
-                                <button
-                                  onClick={() => (SECTION_DEFS[openStage] || []).forEach((n) => setSubStatus(r, openStage, n, "none"))}
-                                  className="px-3 py-1 rounded-lg border text-xs"
-                                >
-                                  Clear All
-                                </button>
-                                <button onClick={() => { setOpenKey(""); setOpenStage(""); }} className="ml-auto px-3 py-1 rounded-lg border text-xs">
-                                  Close
-                                </button>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <footer className="text-xs text-gray-500 text-center">
-          Weights, mandatory stages, and Google Apps Script persistence can be added next.
-        </footer>
-      </div>
-    </div>
-  );
-}
+                          <td colSpan={headers.length + 1} class
