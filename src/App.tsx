@@ -2,7 +2,7 @@ import HeartbeatTest from "./components/HeartbeatTest";
 import React from "react";
 
 // TS-friendly access to Vite env (avoids TS2339 on import.meta.env)
-const SYNC_URL = (import.meta as any).env.VITE_SYNC_URL; // Apps Script web app URL
+const SYNC_URL = "/api/sheets";
 
 const DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091"
 
