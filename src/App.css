@@ -67,48 +67,32 @@ button.cell-done {
   background: #ecfdf5;
   border-color: #34d399;
 }
-/* Keep stage sections in a neat box, open or closed */
-table.jobs details {
-  display: inline-block;          /* so the box hugs the content */
-  background: #fff;
+/* Base style for subtask buttons */
+.sub {
+  display: inline-block;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 6px 8px;
-  vertical-align: top;
-}
-
-/* Remove default summary marker and keep layout consistent */
-table.jobs summary {
-  list-style: none;
-  display: inline-block;
+  border-radius: 8px;
+  padding: 0.35em 0.6em;
+  font-size: 0.9em;
   cursor: pointer;
-}
-table.jobs summary::-webkit-details-marker { display: none; }
-
-/* Custom caret so it doesn't shift formatting */
-table.jobs details > summary::before {
-  content: "▸";
-  display: inline-block;
-  margin-right: 6px;
-  opacity: 0.6;
-}
-table.jobs details[open] > summary::before {
-  content: "▾";
+  background: #f9fafb;       /* light background instead of plain text */
+  margin: 2px;               /* spacing between chips */
+  transition: background-color 120ms ease, box-shadow 120ms ease, transform 80ms ease;
 }
 
-/* Space between the header button and the chips when open */
-table.jobs details[open] > .subs {
-  margin-top: 8px;
-}
-
-/* Ensure the button keeps its size/shape when opened */
-table.jobs details > summary > button {
-  margin: 0;                       /* avoid UA margins on summary affecting button */
-  vertical-align: middle;
-}
-
-/* Optional: a little highlight when open */
-table.jobs details[open] {
+.sub:hover {
+  transform: translateY(-1px);
   box-shadow: 0 1px 6px rgba(0,0,0,0.06);
 }
 
+/* Progress state */
+.sub.cell-progress {
+  background: #fff7ed;
+  border-color: #fb923c;
+}
+
+/* Done state */
+.sub.cell-done {
+  background: #ecfdf5;
+  border-color: #34d399;
+}
