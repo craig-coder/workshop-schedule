@@ -274,13 +274,11 @@ export default function App() {
       const url = `${STATE_PROXY}?mode=state&sheet=${encodeURIComponent(sheetUrl)}&t=${Date.now()}`;
       const res = await fetch(url, { method: "GET", cache: "no-store" });
       if (!res.ok) return;
+
       const data = await res.json();
       const serverRows = (data?.rows ?? []) as StateRow[];
 
-      // Guard to avoid wiping local state if server is (temporarily) empty,
-      // but allow when explicitly forced from Refresh.
-      if (!force && serverRows.length === 0 && Object.keys(progress || {}).length > 0) return;
-
+      // IMPORTANT: always mirror the server; remove the guard that kept stale local state
       const next = buildProgressFromState(serverRows);
       setProgress(next);
     } catch {
@@ -289,8 +287,8 @@ export default function App() {
   }
 
   React.useEffect(() => {
-    fetchServerState(); // initial pull
-    const t = setInterval(fetchServerState, STATE_POLL_MS);
+    fetchServerState(true); // initial pull (force)
+    const t = setInterval(() => fetchServerState(false), STATE_POLL_MS);
     return () => clearInterval(t);
   }, [sheetUrl]);
 
@@ -461,7 +459,7 @@ export default function App() {
       <div className="toolbar">
         <input className="border rounded px-3 py-2 flex-1 min-w-[240px]" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
         <button
-          onClick={() => { loadSheet(); fetchServerState(true); }}
+          onClick={async () => { await loadSheet(); await fetchServerState(true); }}
           disabled={loading}
           className="px-3 py-2 rounded bg-black text-white"
         >
