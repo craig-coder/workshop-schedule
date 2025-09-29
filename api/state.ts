@@ -1,89 +1,65 @@
-// /api/state.ts (Vercel/Next API route, Node runtime)
+// /api/state.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// IMPORTANT: Vercel env var: STATE_API = <your Apps Script /exec URL>
+const STATE_API = process.env.STATE_API as string | undefined;
 
-import type { VercelRequest, VercelResponse } from "@vercel/node";
-
-const STATE_API = process.env.STATE_API ?? ""; // Apps Script exec URL
+function sendJSON(res: VercelResponse, body: any, status = 200) {
+  res.setHeader('Content-Type', 'application/json');
+  res.status(status).send(JSON.stringify(body));
+}
 
 function setCORS(res: VercelResponse) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCORS(res);
 
-  // Preflight
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  // Health check (works even without STATE_API set)
+  if (req.method === 'GET' && (req.query.mode === 'health' || req.query.mode === 'heartbeat')) {
+    return sendJSON(res, { ok: true, proxy: true, msg: 'proxy alive' });
   }
 
-  try {
-    const mode = String(req.query.mode ?? "").toLowerCase();
+  if (!STATE_API) {
+    return sendJSON(res, { ok: false, where: 'proxy', error: 'Missing STATE_API env var' }, 500);
+  }
 
-    // Health check
-    if (mode === "health" || mode === "heartbeat") {
-      return res.status(200).json({ ok: true, proxy: true, msg: "proxy alive" });
+  // ---- GET -> read state ----
+  if (req.method === 'GET' && req.query.mode === 'state') {
+    const sheet = String(req.query.sheet || '').trim();
+    if (!sheet) return sendJSON(res, { ok: false, error: 'Missing sheet' }, 400);
+
+    try {
+      const url = `${STATE_API}?mode=state&sheet=${encodeURIComponent(sheet)}`;
+      const r = await fetch(url, { method: 'GET' });
+      const json = await r.json().catch(() => ({}));
+      return sendJSON(res, json, r.ok ? 200 : 500);
+    } catch (err: any) {
+      return sendJSON(res, { ok: false, error: String(err?.message || err) }, 500);
     }
+  }
 
-    // Ensure STATE_API exists
-    if (!STATE_API) {
-      return res.status(500).json({ ok: false, where: "proxy", error: "Missing STATE_API env var" });
-    }
+  // ---- POST -> write state ----
+  if (req.method === 'POST') {
+    try {
+      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+      if (!body?.sheet) return sendJSON(res, { ok: false, error: 'Missing sheet' }, 400);
 
-    // ---- GET: read state from Apps Script ----
-    if (req.method === "GET" && mode === "state") {
-      // Accept encoded or plain sheet URLs
-      let sheetParam = String(req.query.sheet ?? "");
-      try {
-        // If it's URL-encoded, decode once. If not, this will be a no-op.
-        sheetParam = decodeURIComponent(sheetParam);
-      } catch {
-        /* ignore decode errors */
-      }
-      if (!sheetParam) {
-        return res.status(400).json({ ok: false, error: "Missing sheet" });
-      }
-
-      // Forward to Apps Script
-      const url = new URL(STATE_API);
-      url.searchParams.set("mode", "state");
-      url.searchParams.set("sheet", sheetParam);
-
-      const forward = await fetch(url.toString(), { method: "GET" });
-      const text = await forward.text();
-
-      // Try parse JSON; if failed, return raw text for easier debugging
-      try {
-        const json = JSON.parse(text);
-        return res.status(forward.ok ? 200 : 500).json(json);
-      } catch {
-        return res.status(forward.ok ? 200 : 500).json({ ok: false, error: "Non-JSON from Apps Script", raw: text });
-      }
-    }
-
-    // ---- POST: write to Apps Script ----
-    if (req.method === "POST") {
-      const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-      const forward = await fetch(STATE_API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const r = await fetch(STATE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const text = await forward.text();
-      try {
-        const json = JSON.parse(text);
-        return res.status(forward.ok ? 200 : 500).json(json);
-      } catch {
-        return res.status(forward.ok ? 200 : 500).json({ ok: false, error: "Non-JSON from Apps Script", raw: text });
-      }
+      const json = await r.json().catch(() => ({}));
+      return sendJSON(res, json, r.ok ? 200 : 500);
+    } catch (err: any) {
+      return sendJSON(res, { ok: false, error: String(err?.message || err) }, 500);
     }
-
-    // Unknown route
-    return res.status(400).json({ ok: false, error: "Unknown GET/POST or mode" });
-  } catch (err: any) {
-    return res.status(500).json({ ok: false, where: "proxy", error: err?.message || String(err) });
   }
+
+  return sendJSON(res, { ok: false, error: 'Unknown GET' }, 404);
 }
