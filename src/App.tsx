@@ -7,7 +7,8 @@ const DEFAULT_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091";
 
 /** === NEW: Apps Script state API (paste your Web App URL) === **/
-const STATE_API = "https://script.google.com/macros/s/AKfycbyha1bpsQm0lBQU5tJE0L4vCEd8yJlJNFoZF5b5PqZMudb9RlF8Run7JYMFzw2OSWQGIQ/exec";
+const STATE_API =
+  "https://script.google.com/macros/s/AKfycbyha1bpsQm0lBQU5tJE0L4vCEd8yJlJNFoZF5b5PqZMudb9RlF8Run7JYMFzw2OSWQGIQ/exec";
 const STATE_POLL_MS = 15000; // 15s; tweak if you want faster/slower polling
 
 /** util: turn the visible Google Sheet URL into direct CSV */
@@ -215,14 +216,29 @@ type StateRow = {
   UpdatedAt?: string;
 };
 
-// Convert server rows -> your progress shape
+/** Convert server rows -> in-app progress shape, picking the NEWEST per Job+Stage+Subtask */
 function buildProgressFromState(rows: StateRow[]) {
-  const out: Record<string, any> = {};
+  // 1) Choose latest row per key
+  const pickLatest = new Map<string, StateRow>();
   for (const r of rows) {
-    const job = r.Job?.trim() || "";
-    if (!job) continue;
-    const stage = r.Stage;
-    const sub = r.Subtask || "__stage__";
+    const job = (r.Job || "").trim();
+    const stage = (r.Stage || "").trim();
+    const sub = ((r.Subtask || "__stage__").trim() || "__stage__");
+    if (!job || !stage) continue;
+
+    const key = `${job}||${stage}||${sub}`;
+    const prev = pickLatest.get(key);
+    const prevT = prev?.UpdatedAt ? new Date(prev.UpdatedAt).getTime() : -Infinity;
+    const thisT = r.UpdatedAt ? new Date(r.UpdatedAt).getTime() : -Infinity;
+    if (!prev || thisT >= prevT) pickLatest.set(key, r);
+  }
+
+  // 2) Build app state
+  const out: Record<string, any> = {};
+  for (const r of pickLatest.values()) {
+    const job = r.Job.trim();
+    const stage = r.Stage.trim();
+    const sub = ((r.Subtask || "__stage__").trim() || "__stage__");
     const status = (r.Status || "none") as Status;
     const notes = r.Notes || "";
 
@@ -230,10 +246,8 @@ function buildProgressFromState(rows: StateRow[]) {
     const cur = out[job][stage] || { subs: {}, status: "none", notes: "" };
 
     if (sub === "__stage__") {
-      // single-stage
       out[job][stage] = { ...cur, status, notes };
     } else {
-      // subtasked
       const subs = cur.subs || {};
       subs[sub] = { status, notes: subs[sub]?.notes || "" };
       out[job][stage] = { ...cur, subs };
@@ -287,8 +301,15 @@ export default function App() {
       const url = `${STATE_API}?mode=state&sheet=${encodeURIComponent(sheetUrl)}`;
       const res = await fetch(url, { method: "GET" });
       if (!res.ok) return;
+
       const data = await res.json();
-      const next = buildProgressFromState((data?.rows ?? []) as StateRow[]);
+      // backend returns { ok, rows } in my robust version, but allow plain {rows} too
+      const serverRows = (data?.rows ?? []) as StateRow[];
+
+      // SAFETY: don't wipe non-empty local state with empty server data
+      if (serverRows.length === 0 && Object.keys(progress || {}).length > 0) return;
+
+      const next = buildProgressFromState(serverRows);
       setProgress(next);
     } catch {
       // ignore transient errors
