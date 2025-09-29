@@ -2,9 +2,13 @@ import React from "react";
 import "./App.css";
 
 /** === constants you already use === **/
-const SYNC_URL = "/api/sheets";
+const SYNC_URL = "/api/sheets"; // (kept, but not used for state now)
 const DEFAULT_SHEET_URL =
-  "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091";
+  "https://script.google.com/macros/s/AKfycbyha1bpsQm0lBQU5tJE0L4vCEd8yJlJNFoZF5b5PqZMudb9RlF8Run7JYMFzw2OSWQGIQ/exec";
+
+/** === NEW: Apps Script state API (paste your Web App URL) === **/
+const STATE_API = "PASTE_YOUR_APPS_SCRIPT_WEBAPP_URL_HERE";
+const STATE_POLL_MS = 15000; // 15s; tweak if you want faster/slower polling
 
 /** util: turn the visible Google Sheet URL into direct CSV */
 function toCsvUrl(input: string) {
@@ -79,8 +83,8 @@ const SECTION_DEFS: Record<string, string[]> = {
   "Wrap & Pack": ["Fronts Packed", "Cabinets Packed", "Fitters Kit Packed", "Rails Cut", "Loaded"],
 
   // Special cases (no subtasks):
-  Remedials: [],          // Notes + single toggle
-  "Job Complete": [],     // Computed only
+  Remedials: [], // Notes + single toggle
+  "Job Complete": [], // Computed only
 };
 
 const STAGE_COLUMNS = [
@@ -92,11 +96,11 @@ const STAGE_COLUMNS = [
   "Prime",
   "Top Coat",
   "Wrap & Pack",
-  "Remedials",   // (Notes + Complete)
-  "Job Complete" // (computed)
+  "Remedials", // (Notes + Complete)
+  "Job Complete", // (computed)
 ] as const;
 
-/** local storage for client-side progress (unchanged) */
+/** local storage for client-side progress (still used as in-memory state, but server is source of truth) */
 function useLocalProgress() {
   const key = "wff_progress_multi_stage_v3";
   const [state, setState] = React.useState<Record<string, any>>(() => {
@@ -200,6 +204,44 @@ function computeJobProgress(
   return (sum / stages.length) * 100;
 }
 
+/** === NEW: server state types & builders === */
+type StateRow = {
+  Job: string;
+  Stage: string;
+  Subtask: string; // "__stage__" for single-stage
+  Status: string; // "none" | "progress" | "done"
+  Notes?: string;
+  UpdatedBy?: string;
+  UpdatedAt?: string;
+};
+
+// Convert server rows -> your progress shape
+function buildProgressFromState(rows: StateRow[]) {
+  const out: Record<string, any> = {};
+  for (const r of rows) {
+    const job = r.Job?.trim() || "";
+    if (!job) continue;
+    const stage = r.Stage;
+    const sub = r.Subtask || "__stage__";
+    const status = (r.Status || "none") as Status;
+    const notes = r.Notes || "";
+
+    out[job] = out[job] || {};
+    const cur = out[job][stage] || { subs: {}, status: "none", notes: "" };
+
+    if (sub === "__stage__") {
+      // single-stage
+      out[job][stage] = { ...cur, status, notes };
+    } else {
+      // subtasked
+      const subs = cur.subs || {};
+      subs[sub] = { status, notes: subs[sub]?.notes || "" };
+      out[job][stage] = { ...cur, subs };
+    }
+  }
+  return out;
+}
+
 /** === APP === */
 export default function App() {
   const [sheetUrl, setSheetUrl] = React.useState(DEFAULT_SHEET_URL);
@@ -237,6 +279,27 @@ export default function App() {
   React.useEffect(() => {
     loadSheet();
   }, []);
+
+  /** === NEW: fetch server state & poll (server is source of truth) === */
+  async function fetchServerState() {
+    try {
+      if (!STATE_API) return;
+      const url = `${STATE_API}?mode=state&sheet=${encodeURIComponent(sheetUrl)}`;
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const next = buildProgressFromState((data?.rows ?? []) as StateRow[]);
+      setProgress(next);
+    } catch {
+      // ignore transient errors
+    }
+  }
+
+  React.useEffect(() => {
+    fetchServerState(); // initial pull
+    const t = setInterval(fetchServerState, STATE_POLL_MS);
+    return () => clearInterval(t);
+  }, [sheetUrl]);
 
   /** stage progress calculator
    *  - For stages with subtasks: derive from subs
@@ -289,7 +352,9 @@ export default function App() {
       const next = { subs: { ...(cur.subs || {}), [name]: { status, notes: curItem.notes } } };
       return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
     });
-    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status });
+    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status })
+      .then(fetchServerState)
+      .catch(() => {});
   }
 
   /** NEW: single-stage setter (e.g., Remedials status) */
@@ -300,7 +365,9 @@ export default function App() {
       const next = { ...(cur || {}), status };
       return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
     });
-    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, status });
+    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, status })
+      .then(fetchServerState)
+      .catch(() => {});
   }
 
   /** NEW: Remedials notes setter */
@@ -312,7 +379,9 @@ export default function App() {
       const next = { ...cur, notes: text };
       return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
     });
-    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, notes: text });
+    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, notes: text })
+      .then(fetchServerState)
+      .catch(() => {});
   }
 
   /** NEW: computed job-complete check */
@@ -342,11 +411,7 @@ export default function App() {
     // 1) Job Complete (computed only)
     if (stage === "Job Complete") {
       const jc = computeJobComplete(jobKey);
-      return (
-        <div className={`computed-badge ${jc ? "green" : "clear"}`}>
-          {jc ? "Complete" : "—"}
-        </div>
-      );
+      return <div className={`computed-badge ${jc ? "green" : "clear"}`}>{jc ? "Complete" : "—"}</div>;
     }
 
     // 2) Single-stage (no subs) => toggle button (used by Remedials)
@@ -356,11 +421,7 @@ export default function App() {
       const next = cycleStatus(current);
       const btnClass = statusButtonClass(prog.state);
       return (
-        <button
-          className={btnClass}
-          onClick={() => setStageStatus(r, stage, next)}
-          title={stage}
-        >
+        <button className={btnClass} onClick={() => setStageStatus(r, stage, next)} title={stage}>
           {stage}
         </button>
       );
@@ -378,20 +439,10 @@ export default function App() {
         <div className="subs">
           {def.map((name) => {
             const sub = (prog.subs as any)[name];
-            const scls =
-              sub?.status === "done"
-                ? "sub cell-done"
-                : sub?.status === "progress"
-                ? "sub cell-progress"
-                : "sub";
-            const next =
-              sub?.status === "done" ? "none" : sub?.status === "progress" ? "done" : "progress";
+            const scls = sub?.status === "done" ? "sub cell-done" : sub?.status === "progress" ? "sub cell-progress" : "sub";
+            const next = sub?.status === "done" ? "none" : sub?.status === "progress" ? "done" : "progress";
             return (
-              <button
-                key={name}
-                className={scls}
-                onClick={() => setSubStatus(r, stage, name, next as Status)}
-              >
+              <button key={name} className={scls} onClick={() => setSubStatus(r, stage, name, next as Status)}>
                 {name}
               </button>
             );
@@ -401,12 +452,23 @@ export default function App() {
     );
   }
 
+  /** === NEW: write updates to Apps Script (Sheet) instead of local-only === */
   async function pushUpdate(payload: any) {
     try {
-      await fetch(SYNC_URL, {
+      if (!STATE_API) return;
+      const body = {
+        sheet: sheetUrl,
+        job: payload.job,
+        stage: payload.stage,
+        subtask: payload.subtask || "", // "" => single-stage (__stage__ on server)
+        status: payload.status || "",
+        notes: payload.notes || "",
+        updatedBy: payload.updatedBy || payload.updated_by || "",
+      };
+      await fetch(STATE_API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       });
     } catch {
       /* ignore */
@@ -424,26 +486,14 @@ export default function App() {
     <div className="app">
       {/* toolbar */}
       <div className="toolbar">
-        <input
-          className="border rounded px-3 py-2 flex-1 min-w-[240px]"
-          value={sheetUrl}
-          onChange={(e) => setSheetUrl(e.target.value)}
-        />
+        <input className="border rounded px-3 py-2 flex-1 min-w-[240px]" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
         <button onClick={loadSheet} disabled={loading} className="px-3 py-2 rounded bg-black text-white">
           {loading ? "Loading…" : "Refresh"}
         </button>
 
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <label style={{ fontSize: 12, color: "#555" }}>Zoom</label>
-          <input
-            className="range"
-            type="range"
-            min={0.8}
-            max={1.6}
-            step={0.05}
-            value={zoom}
-            onChange={(e) => setZoom(parseFloat(e.target.value))}
-          />
+          <input className="range" type="range" min={0.8} max={1.6} step={0.05} value={zoom} onChange={(e) => setZoom(parseFloat(e.target.value))} />
           <span style={{ fontSize: 12, color: "#555", width: 36, textAlign: "right" }}>{Math.round(zoom * 100)}%</span>
         </span>
       </div>
@@ -451,12 +501,7 @@ export default function App() {
       {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
 
       <div className="mb-3">
-        <input
-          className="border rounded px-3 py-2 w-[360px] max-w-full"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search…"
-        />
+        <input className="border rounded px-3 py-2 w-[360px] max-w-full" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search…" />
       </div>
 
       <div className="overflow-auto border rounded-xl">
@@ -478,7 +523,7 @@ export default function App() {
                 }
                 return <th key={s}>{s}</th>;
               })}
-              <th>Progress</th> {/* NEW overall job progress */}
+              <th>Progress</th>
             </tr>
           </thead>
 
@@ -486,8 +531,7 @@ export default function App() {
             {filtered.map((r, i) => {
               const jobKey = getJobKeyFromRow(r);
               // parse days as number (allow negatives)
-              const daysRaw =
-                r["Days Until Delivery"] ?? r["days until delivery"] ?? r["Days"] ?? r["Due"] ?? "";
+              const daysRaw = r["Days Until Delivery"] ?? r["days until delivery"] ?? r["Days"] ?? r["Due"] ?? "";
               const days = daysRaw === "" ? null : Number(daysRaw);
 
               // remedials notes (from local state)
@@ -506,7 +550,9 @@ export default function App() {
                       "—"
                     )}
                   </td>
-                  <td><HeatCell days={isNaN(days as any) ? null : (days as number)} /></td>
+                  <td>
+                    <HeatCell days={isNaN(days as any) ? null : (days as number)} />
+                  </td>
 
                   {STAGE_COLUMNS.map((stage) => {
                     if (stage === "Remedials") {
@@ -527,7 +573,6 @@ export default function App() {
                     return <td key={`${jobKey}-${stage}`}>{stageButton(jobKey, r, stage)}</td>;
                   })}
 
-                  {/* NEW: overall job progress */}
                   <td>
                     <ProgressBar value={computeJobProgress(jobKey, getStageProgress)} />
                   </td>
@@ -539,8 +584,7 @@ export default function App() {
       </div>
 
       <div className="mt-3 text-xs text-gray-500">
-        Sheet is the source of truth. Sub-task updates write to the <code>WorkshopJobState</code> tab and are
-        pulled back every 15s (depending on your server code).
+        Sheet is the source of truth. Sub-task updates write to the <code>WorkshopJobState</code> tab and are pulled back every 15s.
       </div>
     </div>
   );
