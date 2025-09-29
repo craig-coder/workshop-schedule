@@ -4,7 +4,7 @@ import "./App.css";
 /** === constants you already use === **/
 const SYNC_URL = "/api/sheets"; // (kept, but not used for state now)
 const DEFAULT_SHEET_URL =
-  "https://script.google.com/macros/s/AKfycbyha1bpsQm0lBQU5tJE0L4vCEd8yJlJNFoZF5b5PqZMudb9RlF8Run7JYMFzw2OSWQGIQ/exec";
+  "https://docs.google.com/spreadsheets/d/1Meojz6Ob41qPc2m-cvws24d1Zf7TTfqmo4cD_AFUOXU/edit?gid=270301091#gid=270301091";
 
 /** === NEW: Apps Script state API (paste your Web App URL) === **/
 const STATE_API = "PASTE_YOUR_APPS_SCRIPT_WEBAPP_URL_HERE";
