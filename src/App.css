@@ -1,14 +1,14 @@
 /* src/App.css */
 
-/* ============ App shell & zoom ============ */
+/* App shell & zoom */
 .app {
-  --zoom: 1; /* set by JS (80%–160%) */
+  --zoom: 1;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   font-size: calc(14px * var(--zoom));
   padding: 16px;
 }
 
-/* ============ Toolbar ============ */
+/* Toolbar */
 .toolbar {
   display: flex;
   gap: 10px;
@@ -20,7 +20,7 @@
   width: 180px;
 }
 
-/* ============ Table ============ */
+/* Table */
 table.jobs {
   width: 100%;
   border-collapse: collapse;
@@ -30,32 +30,18 @@ table.jobs {
   border-radius: 10px;
   overflow: hidden;
 }
-
 table.jobs th,
 table.jobs td {
-  padding: 0.6em 0.7em; /* scales with zoom */
+  padding: 0.6em 0.7em;
   border-bottom: 1px solid #f1f5f9;
   vertical-align: top;
   font-size: 1em;
 }
 
-/* ============ Stage buttons (3-state) ============ */
+/* Stage buttons (3-state) */
 button.cell-none,
 button.cell-progress,
 button.cell-done {
   min-width: 6.5em;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 0.35em 0.6em;
-  cursor: pointer;
-  background: #fff;
-  transition: transform 80ms ease, box-shadow 120ms ease, background-color 120ms ease;
-}
-button.cell-none:hover,
-button.cell-progress:hover,
-button.cell-done:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
-}
-button.cell-progress { background: #fff7ed; border-color: #fb923c; }
-button.cell-do
+  border
