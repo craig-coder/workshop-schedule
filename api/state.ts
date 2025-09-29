@@ -3,6 +3,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 const STATE_API = process.env.STATE_API as string;
 
+// Add CORS headers
 function setCORS(res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -11,41 +12,51 @@ function setCORS(res: VercelResponse) {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCORS(res);
-  if (req.method === "OPTIONS") return res.status(200).end();
+
+  if (req.method === "OPTIONS") {
+    res.status(200).end();
+    return;
+  }
 
   if (!STATE_API) {
-    return res.status(500).json({ ok: false, where: "proxy", error: "Missing STATE_API env var" });
+    res.status(500).json({ ok: false, error: "Missing STATE_API env var" });
+    return;
   }
 
   try {
-    if (req.method === "GET") {
+    const mode = (req.query.mode as string) || "";
+    if (mode === "health") {
+      res.status(200).json({ ok: true, proxy: true, msg: "Proxy alive" });
+      return;
+    }
+
+    if (req.method === "GET" && mode === "state") {
+      // Forward GET to Apps Script
+      const sheet = req.query.sheet as string;
       const url = new URL(STATE_API);
-      for (const [k, v] of Object.entries(req.query)) url.searchParams.set(k, String(v));
+      url.searchParams.set("mode", "state");
+      if (sheet) url.searchParams.set("sheet", sheet);
+
       const resp = await fetch(url.toString(), { method: "GET" });
-      const text = await resp.text();
-      try {
-        return res.status(resp.status).json(JSON.parse(text));
-      } catch {
-        return res.status(resp.status).json({ ok: false, where: "apps-script", status: resp.status, text });
-      }
+      const json = await resp.json();
+      res.status(200).json(json);
+      return;
     }
 
     if (req.method === "POST") {
+      // Forward POST to Apps Script
       const resp = await fetch(STATE_API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req.body || {}),
+        body: JSON.stringify(req.body),
       });
-      const text = await resp.text();
-      try {
-        return res.status(resp.status).json(JSON.parse(text));
-      } catch {
-        return res.status(resp.status).json({ ok: false, where: "apps-script", status: resp.status, text });
-      }
+      const json = await resp.json();
+      res.status(200).json(json);
+      return;
     }
 
-    return res.status(405).json({ ok: false, error: "Method not allowed" });
+    res.status(400).json({ ok: false, error: "Unknown request" });
   } catch (err: any) {
-    return res.status(500).json({ ok: false, where: "proxy-catch", error: String(err?.message || err) });
+    res.status(500).json({ ok: false, error: err.message || "Proxy error" });
   }
 }
