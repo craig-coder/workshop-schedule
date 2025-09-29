@@ -328,44 +328,52 @@ export default function App() {
       done === total && total > 0 ? "complete" : started > 0 ? "partial" : "none";
     return { subs: map, pct, state };
   }
+async function setSubStatus(r: Record<string, string>, stage: string, name: string, status: Status) {
+  const job = getJobKeyFromRow(r);
+  setProgress((prev: any) => {
+    const cur = prev[job]?.[stage] ?? { subs: {} };
+    const curItem = cur.subs?.[name] || { status: "none" };
+    const next = { subs: { ...(cur.subs || {}), [name]: { status, notes: curItem.notes } } };
+    return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
+  });
 
-  function setSubStatus(r: Record<string, string>, stage: string, name: string, status: Status) {
-    const job = getJobKeyFromRow(r);
-    setProgress((prev: any) => {
-      const cur = prev[job]?.[stage] ?? { subs: {} };
-      const curItem = cur.subs?.[name] || { status: "none" };
-      const next = { subs: { ...(cur.subs || {}), [name]: { status, notes: curItem.notes } } };
-      return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
-    });
-pushUpdate({ /* ... */ })
-  .then(() => fetchServerState(true))
-  .catch(() => {});
-  }
+  try {
+    await pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status });
+    await fetchServerState(true); // force fresh pull after write
+  } catch {}
+}
 
-  function setStageStatus(r: Record<string, string>, stage: string, status: Status) {
-    const job = getJobKeyFromRow(r);
-    setProgress((prev: any) => {
-      const cur = prev[job]?.[stage] ?? {};
-      const next = { ...(cur || {}), status };
-      return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
-    });
- pushUpdate({ /* ... */ })
-  .then(() => fetchServerState(true))
-  .catch(() => {});
-  }
 
-  function setRemedialsNotes(r: Record<string, string>, text: string) {
-    const stage = "Remedials";
-    const job = getJobKeyFromRow(r);
-    setProgress((prev: any) => {
-      const cur = prev[job]?.[stage] ?? { status: "none" };
-      const next = { ...cur, notes: text };
-      return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
-    });
-pushUpdate({ /* ... */ })
-  .then(() => fetchServerState(true))
-  .catch(() => {});
-  }
+async function setStageStatus(r: Record<string, string>, stage: string, status: Status) {
+  const job = getJobKeyFromRow(r);
+  setProgress((prev: any) => {
+    const cur = prev[job]?.[stage] ?? {};
+    const next = { ...(cur || {}), status };
+    return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
+  });
+
+  try {
+    await pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, status });
+    await fetchServerState(true);
+  } catch {}
+}
+
+
+async function setRemedialsNotes(r: Record<string, string>, text: string) {
+  const stage = "Remedials";
+  const job = getJobKeyFromRow(r);
+  setProgress((prev: any) => {
+    const cur = prev[job]?.[stage] ?? { status: "none" };
+    const next = { ...cur, notes: text };
+    return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
+  });
+
+  try {
+    await pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, notes: text });
+    await fetchServerState(true);
+  } catch {}
+}
+
 
   function isStageComplete(jobKey: string, stage: string) {
     if (stage === "Job Complete") return true;
