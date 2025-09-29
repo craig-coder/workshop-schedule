@@ -60,19 +60,41 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-/** === Your stage/subtask setup (unchanged) === */
+// Stages + subtasks (3-state each)
 const SECTION_DEFS: Record<string, string[]> = {
   Draw: ["Cabinets Drawn", "Fronts Drawn"],
-  Order: ["LDL", "Handles", "Decormax", "Hafele", "Consumables Check", "Misc"],
+
+  Order: [
+    "LDL",
+    "Handles",
+    "Decormax",
+    "Hafele",
+    "Consumables Check",
+    "Misc",
+  ],
+
   CNC: ["Fronts", "Cabinets"],
   Edging: ["Fronts", "Cabinets"],
+
   Joinery: ["End Dominos", "Angles Cut", "Drawer Packs", "Other"],
+
   Prime: ["Prep", "Side 1", "Side 2"],
-  "Top Coat": ["Prep 1", "Side 1.1", "Side 2.1", "Prep 2", "Side 2.1", "Side 2.2"],
-  "Wrap & Pack": ["Fronts Packed", "Cabinets Packed", "Fitters Kit Packed", "Rails Cut", "Loaded"],
-  Remedials: [],
-  "Job Complete": [],
+
+  // ✅ fixed order — no duplicate "2.1"
+  "Top Coat": ["Prep 1", "Side 1.1", "Side 2.1", "Prep 2", "Side 1.2", "Side 2.2"],
+
+  "Wrap & Pack": [
+    "Fronts Packed",
+    "Cabinets Packed",
+    "Fitters Kit Packed",
+    "Rails Cut",
+    "Loaded",
+  ],
+
+  Remedials: [],          // no subsections (single-stage toggle)
+  "Job Complete": [],     // no subsections (single-stage toggle)
 };
+
 const STAGE_COLUMNS = [
   "Draw",
   "Order",
