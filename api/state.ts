@@ -1,9 +1,11 @@
-// /api/state.ts
+// /api/state.ts (Vercel/Next API route, Node runtime)
+
+// IMPORTANT: Vercel env var: STATE_API = <your Apps Script /exec URL>
+
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const STATE_API = process.env.STATE_API as string;
+const STATE_API = process.env.STATE_API ?? ""; // Apps Script exec URL
 
-// Add CORS headers
 function setCORS(res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -13,50 +15,75 @@ function setCORS(res: VercelResponse) {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCORS(res);
 
+  // Preflight
   if (req.method === "OPTIONS") {
-    res.status(200).end();
-    return;
-  }
-
-  if (!STATE_API) {
-    res.status(500).json({ ok: false, error: "Missing STATE_API env var" });
-    return;
+    return res.status(200).end();
   }
 
   try {
-    const mode = (req.query.mode as string) || "";
-    if (mode === "health") {
-      res.status(200).json({ ok: true, proxy: true, msg: "Proxy alive" });
-      return;
+    const mode = String(req.query.mode ?? "").toLowerCase();
+
+    // Health check
+    if (mode === "health" || mode === "heartbeat") {
+      return res.status(200).json({ ok: true, proxy: true, msg: "proxy alive" });
     }
 
+    // Ensure STATE_API exists
+    if (!STATE_API) {
+      return res.status(500).json({ ok: false, where: "proxy", error: "Missing STATE_API env var" });
+    }
+
+    // ---- GET: read state from Apps Script ----
     if (req.method === "GET" && mode === "state") {
-      // Forward GET to Apps Script
-      const sheet = req.query.sheet as string;
+      // Accept encoded or plain sheet URLs
+      let sheetParam = String(req.query.sheet ?? "");
+      try {
+        // If it's URL-encoded, decode once. If not, this will be a no-op.
+        sheetParam = decodeURIComponent(sheetParam);
+      } catch {
+        /* ignore decode errors */
+      }
+      if (!sheetParam) {
+        return res.status(400).json({ ok: false, error: "Missing sheet" });
+      }
+
+      // Forward to Apps Script
       const url = new URL(STATE_API);
       url.searchParams.set("mode", "state");
-      if (sheet) url.searchParams.set("sheet", sheet);
+      url.searchParams.set("sheet", sheetParam);
 
-      const resp = await fetch(url.toString(), { method: "GET" });
-      const json = await resp.json();
-      res.status(200).json(json);
-      return;
+      const forward = await fetch(url.toString(), { method: "GET" });
+      const text = await forward.text();
+
+      // Try parse JSON; if failed, return raw text for easier debugging
+      try {
+        const json = JSON.parse(text);
+        return res.status(forward.ok ? 200 : 500).json(json);
+      } catch {
+        return res.status(forward.ok ? 200 : 500).json({ ok: false, error: "Non-JSON from Apps Script", raw: text });
+      }
     }
 
+    // ---- POST: write to Apps Script ----
     if (req.method === "POST") {
-      // Forward POST to Apps Script
-      const resp = await fetch(STATE_API, {
+      const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+      const forward = await fetch(STATE_API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req.body),
+        body: JSON.stringify(body),
       });
-      const json = await resp.json();
-      res.status(200).json(json);
-      return;
+      const text = await forward.text();
+      try {
+        const json = JSON.parse(text);
+        return res.status(forward.ok ? 200 : 500).json(json);
+      } catch {
+        return res.status(forward.ok ? 200 : 500).json({ ok: false, error: "Non-JSON from Apps Script", raw: text });
+      }
     }
 
-    res.status(400).json({ ok: false, error: "Unknown request" });
+    // Unknown route
+    return res.status(400).json({ ok: false, error: "Unknown GET/POST or mode" });
   } catch (err: any) {
-    res.status(500).json({ ok: false, error: err.message || "Proxy error" });
+    return res.status(500).json({ ok: false, where: "proxy", error: err?.message || String(err) });
   }
 }
