@@ -268,16 +268,18 @@ export default function App() {
   }, []);
 
   /** === fetch server state via proxy & poll === */
-  async function fetchServerState() {
+  async function fetchServerState(force = false) {
     try {
-      const url = `${STATE_PROXY}?mode=state&sheet=${encodeURIComponent(sheetUrl)}`;
-      const res = await fetch(url, { method: "GET" });
+      // cache-buster + no-store to ensure fresh pull
+      const url = `${STATE_PROXY}?mode=state&sheet=${encodeURIComponent(sheetUrl)}&t=${Date.now()}`;
+      const res = await fetch(url, { method: "GET", cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       const serverRows = (data?.rows ?? []) as StateRow[];
 
-      // Don’t overwrite non-empty local state with empty server data
-      if (serverRows.length === 0 && Object.keys(progress || {}).length > 0) return;
+      // Guard to avoid wiping local state if server is (temporarily) empty,
+      // but allow when explicitly forced from Refresh.
+      if (!force && serverRows.length === 0 && Object.keys(progress || {}).length > 0) return;
 
       const next = buildProgressFromState(serverRows);
       setProgress(next);
@@ -458,7 +460,11 @@ export default function App() {
     <div className="app">
       <div className="toolbar">
         <input className="border rounded px-3 py-2 flex-1 min-w-[240px]" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
-        <button onClick={loadSheet} disabled={loading} className="px-3 py-2 rounded bg-black text-white">
+        <button
+          onClick={() => { loadSheet(); fetchServerState(true); }}
+          disabled={loading}
+          className="px-3 py-2 rounded bg-black text-white"
+        >
           {loading ? "Loading…" : "Refresh"}
         </button>
 
