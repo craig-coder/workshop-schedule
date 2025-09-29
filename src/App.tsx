@@ -337,9 +337,9 @@ export default function App() {
       const next = { subs: { ...(cur.subs || {}), [name]: { status, notes: curItem.notes } } };
       return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
     });
-    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, subtask: name, status })
-      .then(fetchServerState)
-      .catch(() => {});
+pushUpdate({ /* ... */ })
+  .then(() => fetchServerState(true))
+  .catch(() => {});
   }
 
   function setStageStatus(r: Record<string, string>, stage: string, status: Status) {
@@ -349,9 +349,9 @@ export default function App() {
       const next = { ...(cur || {}), status };
       return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
     });
-    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, status })
-      .then(fetchServerState)
-      .catch(() => {});
+ pushUpdate({ /* ... */ })
+  .then(() => fetchServerState(true))
+  .catch(() => {});
   }
 
   function setRemedialsNotes(r: Record<string, string>, text: string) {
@@ -362,9 +362,9 @@ export default function App() {
       const next = { ...cur, notes: text };
       return { ...prev, [job]: { ...(prev[job] || {}), [stage]: next } };
     });
-    pushUpdate({ job, updatedBy: r["Assigned To"] || "Unknown", stage, notes: text })
-      .then(fetchServerState)
-      .catch(() => {});
+pushUpdate({ /* ... */ })
+  .then(() => fetchServerState(true))
+  .catch(() => {});
   }
 
   function isStageComplete(jobKey: string, stage: string) {
