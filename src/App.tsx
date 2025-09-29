@@ -152,6 +152,54 @@ function cycleStatus(s?: Status): Status {
   return "none";
 }
 
+/** ====== PROGRESS BAR + JOB PROGRESS HELPERS ====== */
+
+/** Simple progress bar */
+function ProgressBar({ value }: { value: number }) {
+  const pct = Math.max(0, Math.min(100, Math.round(value)));
+  return (
+    <div className="progress" aria-label={`Progress ${pct}%`}>
+      <div className="progress__track">
+        <div className="progress__bar" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="progress__label">{pct}%</span>
+    </div>
+  );
+}
+
+/** per-stage completion ratio: 0..1 */
+function stageCompletionRatio(
+  jobKey: string,
+  stage: string,
+  getStageProgressFn: (jobKey: string, stage: string) => any
+): number {
+  if (stage === "Job Complete") return 0; // exclude from average
+  const def = SECTION_DEFS[stage] || [];
+  const prog = getStageProgressFn(jobKey, stage);
+
+  // Single-stage (e.g., Remedials)
+  if (def.length === 0) {
+    const s = (prog as any).single?.status as Status | undefined;
+    if (s === "done") return 1;
+    if (s === "progress") return 0.5;
+    return 0;
+  }
+
+  // Subtasked: use pct if available
+  return (prog.pct ?? 0) / 100;
+}
+
+/** overall job progress: average across all stages except Job Complete */
+function computeJobProgress(
+  jobKey: string,
+  getStageProgressFn: (jobKey: string, stage: string) => any
+): number {
+  const stages = STAGE_COLUMNS.filter((s) => s !== "Job Complete");
+  if (stages.length === 0) return 0;
+  const sum = stages.reduce((acc, s) => acc + stageCompletionRatio(jobKey, s, getStageProgressFn), 0);
+  return (sum / stages.length) * 100;
+}
+
 /** === APP === */
 export default function App() {
   const [sheetUrl, setSheetUrl] = React.useState(DEFAULT_SHEET_URL);
@@ -228,7 +276,8 @@ export default function App() {
     }
     const total = names.length;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    const state: "none" | "partial" | "complete" = done === total && total > 0 ? "complete" : started > 0 ? "partial" : "none";
+    const state: "none" | "partial" | "complete" =
+      done === total && total > 0 ? "complete" : started > 0 ? "partial" : "none";
     return { subs: map, pct, state };
   }
 
@@ -429,6 +478,7 @@ export default function App() {
                 }
                 return <th key={s}>{s}</th>;
               })}
+              <th>Progress</th> {/* NEW overall job progress */}
             </tr>
           </thead>
 
@@ -476,6 +526,11 @@ export default function App() {
                     }
                     return <td key={`${jobKey}-${stage}`}>{stageButton(jobKey, r, stage)}</td>;
                   })}
+
+                  {/* NEW: overall job progress */}
+                  <td>
+                    <ProgressBar value={computeJobProgress(jobKey, getStageProgress)} />
+                  </td>
                 </tr>
               );
             })}
